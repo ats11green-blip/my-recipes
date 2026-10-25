@@ -1589,9 +1589,7 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
               systemInstruction: { parts: [{ text: systemPrompt }] }
             };
 
-            if (promptText && aiImages.value.length === 0) {
-              payload.tools = [{ "google_search": {} }];
-            }
+            
 
             const response = await fetch(getApiUrl(), {
               method: 'POST',
