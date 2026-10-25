@@ -1,0 +1,1903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyRecipeVault - マイレシピ管理＆献立ノート</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans JP', sans-serif;
+      background-color: #f8fafc;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col selection:bg-emerald-500 selection:text-white">
+  <div id="app" v-cloak class="flex-1 flex flex-col">
+
+    <!-- Toast Notification -->
+    <div v-if="toastMessage" class="fixed top-5 right-5 z-50 bg-slate-800 text-white px-4 py-3 rounded-xl shadow-xl flex items-center space-x-3 transition-all duration-300 max-w-sm">
+      <i class="fa-solid fa-circle-check text-emerald-400 text-lg shrink-0"></i>
+      <span class="text-xs font-medium leading-relaxed">{{ toastMessage }}</span>
+    </div>
+
+    <!-- Error Detail Modal -->
+    <div v-if="aiErrorMessage" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-red-200">
+        <div class="flex items-center space-x-3 text-red-600">
+          <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+          <h3 class="font-bold text-base text-slate-800">AI通信エラー</h3>
+        </div>
+        <div class="bg-slate-900 text-red-300 font-mono text-[11px] p-3 rounded-xl overflow-x-auto whitespace-pre-wrap max-h-48 border border-slate-700">
+          {{ aiErrorMessage }}
+        </div>
+        <div class="flex justify-end">
+          <button @click="aiErrorMessage = ''" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-emerald-700 text-white shadow-md sticky top-0 z-40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <!-- Logo -->
+        <div class="flex items-center space-x-3 cursor-pointer" @click="activeTab = 'recipes'">
+          <div class="bg-white text-emerald-700 p-2 rounded-xl shadow-inner text-xl font-black">
+            <i class="fa-solid fa-book-bookmark"></i>
+          </div>
+          <div>
+            <h1 class="text-lg font-bold tracking-tight leading-none">MyRecipeVault</h1>
+            <span class="text-[11px] text-emerald-100 opacity-90">手持ちレシピ管理・検索・献立ノート</span>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs (Desktop) -->
+        <nav class="hidden md:flex space-x-1 bg-emerald-800/40 p-1 rounded-xl text-xs font-medium">
+          <button 
+            @click="activeTab = 'recipes'" 
+            :class="activeTab === 'recipes' ? 'bg-white text-emerald-800 shadow-sm font-bold' : 'text-white hover:bg-white/10'"
+            class="px-4 py-2 rounded-lg transition-all flex items-center space-x-2">
+            <i class="fa-solid fa-utensils"></i>
+            <span>マイレシピ一覧</span>
+            <span class="ml-1 bg-emerald-200 text-emerald-900 text-[10px] font-bold px-2 py-0.5 rounded-full">
+              {{ recipes.length }}
+            </span>
+          </button>
+
+          <button 
+            @click="switchToAddNewTab" 
+            :class="activeTab === 'add' ? 'bg-white text-emerald-800 shadow-sm font-bold' : 'text-white hover:bg-white/10'"
+            class="px-4 py-2 rounded-lg transition-all flex items-center space-x-2">
+            <i class="fa-solid fa-plus"></i>
+            <span>レシピ追加 / AI取り込み</span>
+          </button>
+
+          <button 
+            @click="activeTab = 'planner'" 
+            :class="activeTab === 'planner' ? 'bg-white text-emerald-800 shadow-sm font-bold' : 'text-white hover:bg-white/10'"
+            class="px-4 py-2 rounded-lg transition-all flex items-center space-x-2">
+            <i class="fa-solid fa-calendar-days"></i>
+            <span>献立＆買い物リスト</span>
+          </button>
+
+          <button 
+            @click="activeTab = 'ai-assistant'" 
+            :class="activeTab === 'ai-assistant' ? 'bg-white text-emerald-800 shadow-sm font-bold' : 'text-white hover:bg-white/10'"
+            class="px-4 py-2 rounded-lg transition-all flex items-center space-x-2">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span>マイレシピAI相談</span>
+          </button>
+        </nav>
+
+        <!-- Quick Data Actions -->
+        <div class="flex items-center space-x-2">
+          <button 
+            @click="showApiKeyModal = true" 
+            title="Gemini APIキー設定（AI機能用）"
+            class="bg-emerald-800 hover:bg-emerald-900 text-emerald-100 text-xs px-2.5 py-1.5 rounded-lg transition flex items-center space-x-1 border border-emerald-600">
+            <i class="fa-solid fa-key text-amber-300"></i>
+            <span class="hidden sm:inline">APIキー設定</span>
+          </button>
+          
+          <button 
+            @click="exportRecipesJson" 
+            title="レシピデータのバックアップ出力"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs p-2 rounded-lg transition">
+            <i class="fa-solid fa-file-export"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <!-- ================= TAB 1: マイレシピ一覧 & 高機能検索 ================= -->
+      <section v-if="activeTab === 'recipes'" class="space-y-6">
+        
+        <!-- Search & Filter Controls -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200/80 space-y-4">
+          
+          <!-- Top Row: Search Input & Sort Options -->
+          <div class="flex flex-col md:flex-row gap-3 items-center justify-between">
+            
+            <!-- Keyword Search Input -->
+            <div class="relative flex-1 w-full">
+              <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+              <input 
+                v-model="searchQuery" 
+                type="text" 
+                placeholder="手持ちレシピ内を検索（料理名・材料・調味料・メモ・コツ...）" 
+                class="w-full pl-11 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition">
+              <button 
+                v-if="searchQuery" 
+                @click="searchQuery = ''" 
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 text-xs">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <!-- Category & Sort Selects -->
+            <div class="flex items-center gap-2 w-full md:w-auto">
+              <select 
+                v-model="selectedCategory" 
+                class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                <option value="">全てのカテゴリ</option>
+                <option v-for="cat in availableCategories" :key="cat" :value="cat">{{ cat }}</option>
+              </select>
+
+              <select 
+                v-model="sortBy" 
+                class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                <option value="newest">新しい順</option>
+                <option value="rating">評価（★）が高い順</option>
+                <option value="time">調理時間が短い順</option>
+                <option value="title">五十音順</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Quick Pantry / Refrigerator Ingredient Filter -->
+          <div class="pt-2 border-t border-slate-100 space-y-2">
+            <div class="flex items-center justify-between text-xs font-bold text-slate-600">
+              <span class="flex items-center gap-1.5 text-emerald-800">
+                <i class="fa-solid fa-refrigerator text-emerald-600"></i>
+                <span>冷蔵庫にある食材から絞り込む:</span>
+              </span>
+              <button 
+                v-if="selectedPantryIngredients.length > 0" 
+                @click="selectedPantryIngredients = []" 
+                class="text-slate-400 hover:text-emerald-600 text-[11px] font-normal underline">
+                選択解除 ({{ selectedPantryIngredients.length }})
+              </button>
+            </div>
+
+            <div class="flex flex-wrap gap-1.5">
+              <button 
+                v-for="ing in commonPantryList" 
+                :key="ing" 
+                @click="togglePantryIngredient(ing)" 
+                :class="selectedPantryIngredients.includes(ing) ? 'bg-emerald-600 text-white border-emerald-600 font-bold shadow-sm' : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'"
+                class="text-xs px-2.5 py-1 rounded-lg border transition duration-150 flex items-center gap-1">
+                <i v-if="selectedPantryIngredients.includes(ing)" class="fa-solid fa-check text-[10px]"></i>
+                <span>{{ ing }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tag Pills -->
+          <div v-if="allTags.length > 0" class="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
+            <span class="text-slate-400 font-medium mr-1">タグ:</span>
+            <button 
+              @click="selectedTag = ''" 
+              :class="selectedTag === '' ? 'bg-slate-800 text-white font-bold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+              class="px-2.5 py-0.5 rounded-full transition">
+              すべて
+            </button>
+            <button 
+              v-for="tag in allTags" 
+              :key="tag" 
+              @click="selectedTag = (selectedTag === tag ? '' : tag)" 
+              :class="selectedTag === tag ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'"
+              class="px-2.5 py-0.5 rounded-full transition">
+              #{{ tag }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Active Filter Summary -->
+        <div v-if="searchQuery || selectedCategory || selectedTag || selectedPantryIngredients.length > 0" class="flex items-center justify-between text-xs text-slate-500 px-1">
+          <div>
+            該当レシピ: <strong class="text-emerald-700 text-sm font-bold">{{ filteredRecipes.length }}</strong> 件
+          </div>
+          <button @click="resetFilters" class="text-emerald-600 hover:underline flex items-center gap-1 font-medium">
+            <i class="fa-solid fa-arrows-rotate"></i> 検索条件をリセット
+          </button>
+        </div>
+
+        <!-- Recipe Grid -->
+        <div v-if="filteredRecipes.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div 
+            v-for="recipe in filteredRecipes" 
+            :key="recipe.id" 
+            class="bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition duration-200 flex flex-col overflow-hidden group">
+            
+            <!-- Recipe Image Thumbnail -->
+            <div v-if="recipe.imageUrl" class="relative h-44 w-full bg-slate-100 overflow-hidden cursor-pointer" @click="openDetailModal(recipe)">
+              <img :src="recipe.imageUrl" :alt="recipe.title" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
+              <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
+              <span class="absolute bottom-2 left-3 text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-600 text-white shadow-sm">
+                {{ recipe.category || '未分類' }}
+              </span>
+            </div>
+
+            <!-- Card Main Content -->
+            <div class="p-5 flex-1 space-y-3">
+              
+              <!-- Category / Source & Rating -->
+              <div class="flex items-center justify-between gap-2">
+                <span v-if="!recipe.imageUrl" class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {{ recipe.category || '未分類' }}
+                </span>
+                <div v-else class="text-[11px] text-slate-400 truncate max-w-[150px]">
+                  元: {{ recipe.source || 'マイレシピ' }}
+                </div>
+
+                <div class="flex items-center space-x-1 text-amber-400 text-xs">
+                  <i 
+                    v-for="star in 5" 
+                    :key="star" 
+                    :class="star <= recipe.rating ? 'fa-solid fa-star' : 'fa-regular fa-star text-slate-200'">
+                  </i>
+                  <span class="text-[11px] text-slate-400 font-bold ml-1">({{ recipe.rating || 0 }})</span>
+                </div>
+              </div>
+
+              <!-- Title -->
+              <h3 
+                @click="openDetailModal(recipe)" 
+                class="font-bold text-slate-800 text-base group-hover:text-emerald-700 transition cursor-pointer line-clamp-2 leading-snug">
+                {{ recipe.title }}
+              </h3>
+
+              <!-- Meta info -->
+              <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500 pt-0.5">
+                <span v-if="recipe.cookingTime" class="flex items-center gap-1 font-medium">
+                  <i class="fa-regular fa-clock text-slate-400"></i> {{ recipe.cookingTime }}
+                </span>
+                <span v-if="recipe.servings" class="flex items-center gap-1 font-medium">
+                  <i class="fa-solid fa-user-group text-slate-400"></i> {{ recipe.servings }}
+                </span>
+              </div>
+
+              <!-- Ingredients snippet -->
+              <div v-if="recipe.ingredients && recipe.ingredients.length > 0" class="bg-slate-50 rounded-xl p-3 text-xs space-y-1">
+                <span class="font-bold text-slate-500 text-[11px] uppercase tracking-wider block">主な材料</span>
+                <p class="text-slate-600 line-clamp-2 leading-relaxed">
+                  {{ getIngredientsText(recipe.ingredients) }}
+                </p>
+              </div>
+
+              <!-- Personal Memo Banner -->
+              <div v-if="recipe.notes" class="bg-amber-50/90 border border-amber-200/60 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+                <div class="font-bold text-amber-800 flex items-center gap-1">
+                  <i class="fa-solid fa-note-sticky text-amber-600"></i>
+                  <span>マイメモ・コツ</span>
+                </div>
+                <p class="text-slate-700 line-clamp-2 whitespace-pre-line text-[11px]">
+                  {{ recipe.notes }}
+                </p>
+              </div>
+
+              <!-- Tags -->
+              <div v-if="recipe.tags && recipe.tags.length > 0" class="flex flex-wrap gap-1 pt-1">
+                <span 
+                  v-for="t in recipe.tags" 
+                  :key="t" 
+                  class="text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
+                  #{{ t }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Card Actions Footer -->
+            <div class="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs">
+              <button 
+                @click="openDetailModal(recipe)" 
+                class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center space-x-1">
+                <i class="fa-solid fa-book-open"></i>
+                <span>レシピを見る</span>
+              </button>
+
+              <div class="flex items-center space-x-1">
+                <button 
+                  @click="addToMealPlanner(recipe)" 
+                  title="今週の献立に追加" 
+                  class="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-100/50 rounded-lg transition">
+                  <i class="fa-solid fa-calendar-plus text-sm"></i>
+                </button>
+                <button 
+                  @click="openEditModal(recipe)" 
+                  title="編集（修正）" 
+                  class="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition">
+                  <i class="fa-solid fa-pen-to-square text-sm"></i>
+                </button>
+                <button 
+                  @click="confirmDeleteRecipe(recipe)" 
+                  title="削除" 
+                  class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                  <i class="fa-solid fa-trash-can text-sm"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else class="bg-white rounded-2xl p-12 text-center text-slate-500 space-y-4 border border-slate-200">
+          <div class="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto text-2xl">
+            <i class="fa-solid fa-utensils"></i>
+          </div>
+          <div class="space-y-1">
+            <h3 class="font-bold text-slate-800 text-lg">レシピが見つかりません</h3>
+            <p class="text-xs text-slate-400 max-w-md mx-auto">
+              {{ searchQuery || selectedCategory || selectedTag || selectedPantryIngredients.length ? '条件に一致するレシピがありません。検索キーワードや絞り込みを変更してみてください。' : '手持ちレシピがまだ登録されていません。「レシピ追加」からお気に入り料理を登録しましょう。' }}
+            </p>
+          </div>
+          <div class="flex justify-center gap-3 pt-2">
+            <button 
+              @click="switchToAddNewTab" 
+              class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-sm transition inline-flex items-center space-x-1">
+              <i class="fa-solid fa-plus"></i>
+              <span>新規レシピを登録する</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TAB 2: レシピ追加 & 修正 & AI解析 ================= -->
+      <section v-if="activeTab === 'add'" class="max-w-3xl mx-auto space-y-6">
+        
+        <!-- Editing Banner / Mode Switcher Header -->
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+          <div v-if="recipeForm.id" class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between">
+            <div class="flex items-center space-x-2 text-blue-900 font-bold text-xs sm:text-sm">
+              <i class="fa-solid fa-pen-to-square text-blue-600 text-base"></i>
+              <span>既存レシピ「<strong class="text-blue-950 underline">{{ recipeForm.title || '無題' }}</strong>」を【修正・更新】しています</span>
+            </div>
+            <button type="button" @click="resetForm" class="text-xs bg-white text-blue-700 hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg border border-blue-200 shadow-sm transition">
+              <i class="fa-solid fa-plus mr-1"></i>新規作成に戻る
+            </button>
+          </div>
+
+          <div class="text-center space-y-1">
+            <h2 class="text-xl font-bold text-slate-800">
+              {{ recipeForm.id ? 'レシピ内容の修正' : 'マイレシピの新規登録' }}
+            </h2>
+            <p class="text-slate-500 text-xs">画像・スクショ（複数枚可）、WebのURL、メモからのAI自動抽出、または手動で入力できます</p>
+          </div>
+
+          <div class="flex bg-slate-100 p-1 rounded-xl text-xs font-bold max-w-md mx-auto">
+            <button 
+              @click="addMode = 'ai'" 
+              :class="addMode === 'ai' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="flex-1 py-2.5 rounded-lg transition flex items-center justify-center space-x-1">
+              <i class="fa-solid fa-wand-magic-sparkles text-emerald-600"></i>
+              <span>画像 / URL / メモからAI取り込み</span>
+            </button>
+            <button 
+              @click="addMode = 'manual'" 
+              :class="addMode === 'manual' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="flex-1 py-2.5 rounded-lg transition flex items-center justify-center space-x-1">
+              <i class="fa-solid fa-pen"></i>
+              <span>入力フォームで編集</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- MODE 1: AI Parsing Mode -->
+        <div v-if="addMode === 'ai'" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+          
+          <!-- Multi-Image Upload Area -->
+          <div class="space-y-2">
+            <label class="block text-xs font-bold text-slate-700 flex items-center justify-between">
+              <span>📷 レシピの写真・スクリーンショット（複数枚一括OK）</span>
+              <span v-if="aiImages.length > 0" @click="clearAllAiImages" class="text-xs text-red-500 hover:underline cursor-pointer font-normal">画像を全削除</span>
+            </label>
+
+            <!-- Drop / Select Area -->
+            <div 
+              @click="$refs.imageInput.click()" 
+              class="border-2 border-dashed border-slate-300 hover:border-emerald-500 bg-slate-50 rounded-2xl p-5 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-2">
+              <div class="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center text-lg">
+                <i class="fa-solid fa-images"></i>
+              </div>
+              <div class="text-xs font-bold text-slate-700">写真・スクリーンショットを追加（複数選択可）</div>
+              <div class="text-[11px] text-slate-400">「材料ページ」と「作り方ページ」など複数枚を一度にまとめて読み込めます</div>
+            </div>
+
+            <!-- Multi Image Preview Grid -->
+            <div v-if="aiImages.length > 0" class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+              <div v-for="(img, idx) in aiImages" :key="idx" class="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-900 h-28">
+                <img :src="img.dataUrl" class="w-full h-full object-cover">
+                <div class="absolute top-1 left-1 bg-slate-900/80 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
+                  #{{ idx + 1 }}
+                </div>
+                <button 
+                  type="button" 
+                  @click.stop="removeAiImage(idx)" 
+                  class="absolute top-1 right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] shadow hover:bg-red-700 transition">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+
+            <input 
+              ref="imageInput" 
+              type="file" 
+              accept="image/*" 
+              multiple 
+              class="hidden" 
+              @change="handleImageSelect">
+          </div>
+
+          <div class="relative flex py-1 items-center">
+            <div class="flex-grow border-t border-slate-200"></div>
+            <span class="flex-shrink mx-3 text-slate-400 text-[11px] font-bold">または</span>
+            <div class="flex-grow border-t border-slate-200"></div>
+          </div>
+
+          <!-- URL / Text Input Area -->
+          <div class="space-y-2">
+            <label class="block text-xs font-bold text-slate-700">
+              Web URL または テキストメモ
+            </label>
+            <textarea 
+              v-model="aiImportInput" 
+              rows="3" 
+              placeholder="【例1】クラシル 豚の生姜焼き https://www.kurashiru.com/...&#10;【例2】「豚肉300g, キャベツ1/4... 炒めて味付けする」などのメモテキスト" 
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            </textarea>
+          </div>
+
+          <button 
+            @click="executeAiImport" 
+            :disabled="isParsingWithAi || (!aiImportInput.trim() && aiImages.length === 0)" 
+            class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition shadow-sm flex items-center justify-center space-x-2">
+            <i v-if="isParsingWithAi" class="fa-solid fa-circle-notch fa-spin"></i>
+            <i v-else class="fa-solid fa-wand-magic-sparkles"></i>
+            <span>{{ isParsingWithAi ? `AIが${aiImages.length > 0 ? aiImages.length + '枚の画像' : '情報'}から解読中...` : 'AIで自動解析して入力フォームにセット' }}</span>
+          </button>
+        </div>
+
+        <!-- MODE 2: Manual Form Entry or Edit -->
+        <form @submit.prevent="saveNewRecipe" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-5 text-xs">
+          
+          <h3 class="font-bold text-slate-800 text-sm border-b border-slate-100 pb-2 flex items-center justify-between">
+            <span class="flex items-center gap-2">
+              <span :class="recipeForm.id ? 'bg-blue-600' : 'bg-emerald-600'" class="w-2.5 h-2.5 rounded-full inline-block"></span>
+              <span>{{ recipeForm.id ? '既存レシピの変更・更新フォーム' : '新規レシピの登録フォーム' }}</span>
+            </span>
+            <span v-if="recipeForm.source" class="text-xs text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+              参照: {{ recipeForm.source }}
+            </span>
+          </h3>
+
+          <!-- Form Image Preview & Uploader -->
+          <div class="space-y-1.5">
+            <label class="block font-bold text-slate-700">レシピ写真（カバー画像）</label>
+            <div class="flex items-center space-x-4">
+              <div v-if="recipeForm.imageUrl" class="w-24 h-24 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 relative group">
+                <img :src="recipeForm.imageUrl" class="w-full h-full object-cover">
+                <button 
+                  type="button" 
+                  @click="recipeForm.imageUrl = ''" 
+                  class="absolute top-1 right-1 bg-slate-900/70 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] hover:bg-red-600 transition">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+
+              <div class="flex-1">
+                <button 
+                  type="button" 
+                  @click="$refs.formImageInput.click()" 
+                  class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-xl transition inline-flex items-center space-x-1 text-xs">
+                  <i class="fa-solid fa-image"></i>
+                  <span>{{ recipeForm.imageUrl ? '写真を変更する' : '写真をアップロード' }}</span>
+                </button>
+                <input 
+                  ref="formImageInput" 
+                  type="file" 
+                  accept="image/*" 
+                  class="hidden" 
+                  @change="handleFormImageSelect">
+                <p class="text-[10px] text-slate-400 mt-1">※写真を選択するとレシピカードに表示されます</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Title -->
+          <div>
+            <label class="block font-bold text-slate-700 mb-1">レシピタイトル *</label>
+            <input 
+              v-model="recipeForm.title" 
+              required 
+              type="text" 
+              placeholder="例: 絶品！我が家の甘辛豚の生姜焼き" 
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500">
+          </div>
+
+          <!-- Category, Time, Servings, Rating -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">カテゴリ</label>
+              <input 
+                v-model="recipeForm.category" 
+                type="text" 
+                placeholder="主菜, 副菜, スープ等" 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">調理時間目安</label>
+              <input 
+                v-model="recipeForm.cookingTime" 
+                type="text" 
+                placeholder="例: 15分" 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">分量</label>
+              <input 
+                v-model="recipeForm.servings" 
+                type="text" 
+                placeholder="例: 2人分" 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">自分評価</label>
+              <select v-model.number="recipeForm.rating" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-amber-500">
+                <option value="5">★★★★★ (5)</option>
+                <option value="4">★★★★☆ (4)</option>
+                <option value="3">★★★☆☆ (3)</option>
+                <option value="2">★★☆☆☆ (2)</option>
+                <option value="1">★☆☆☆☆ (1)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Ingredients List Section -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="font-bold text-slate-700">材料・分量リスト</label>
+              <button 
+                type="button" 
+                @click="addIngredientRow" 
+                class="text-emerald-700 hover:text-emerald-800 font-bold text-xs flex items-center gap-1">
+                <i class="fa-solid fa-plus"></i> 行を追加
+              </button>
+            </div>
+
+            <div class="space-y-2">
+              <div 
+                v-for="(ing, idx) in recipeForm.ingredients" 
+                :key="idx" 
+                class="flex items-center gap-2">
+                <input 
+                  v-model="ing.name" 
+                  type="text" 
+                  placeholder="材料名 (例: 豚薄切り肉)" 
+                  class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <input 
+                  v-model="ing.amount" 
+                  type="text" 
+                  placeholder="分量 (例: 200g)" 
+                  class="w-28 sm:w-36 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <button 
+                  type="button" 
+                  @click="removeIngredientRow(idx)" 
+                  class="text-slate-400 hover:text-red-600 p-2">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Steps List Section -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="font-bold text-slate-700">作り方・順序</label>
+              <button 
+                type="button" 
+                @click="addStepRow" 
+                class="text-emerald-700 hover:text-emerald-800 font-bold text-xs flex items-center gap-1">
+                <i class="fa-solid fa-plus"></i> 手順を追加
+              </button>
+            </div>
+
+            <div class="space-y-2">
+              <div 
+                v-for="(step, idx) in recipeForm.steps" 
+                :key="idx" 
+                class="flex items-start gap-2">
+                <span class="w-6 h-6 bg-slate-200 text-slate-700 rounded-full flex items-center justify-center font-bold shrink-0 mt-1 text-[11px]">
+                  {{ idx + 1 }}
+                </span>
+                <textarea 
+                  v-model="recipeForm.steps[idx]" 
+                  rows="2" 
+                  placeholder="手順を入力..." 
+                  class="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                </textarea>
+                <button 
+                  type="button" 
+                  @click="removeStepRow(idx)" 
+                  class="text-slate-400 hover:text-red-600 p-2 mt-1">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Personal Memo & Tags & Link -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">タグ (カンマ区切り)</label>
+              <input 
+                v-model="recipeForm.tagsStr" 
+                type="text" 
+                placeholder="時短, お弁当, 子供に好評" 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">元URL / 出典 (任意)</label>
+              <input 
+                v-model="recipeForm.url" 
+                type="url" 
+                placeholder="https://..." 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-bold text-slate-700 mb-1">マイメモ・隠し味・アレンジの記録</label>
+            <textarea 
+              v-model="recipeForm.notes" 
+              rows="3" 
+              placeholder="例: 醤油を大さじ1/2減らして、代わりにオイスターソースを少し足すとコクが出る。" 
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+            </textarea>
+          </div>
+
+          <!-- Submit Buttons -->
+          <div class="pt-2 flex flex-col sm:flex-row justify-end items-center gap-3">
+            <button 
+              v-if="recipeForm.id" 
+              type="button" 
+              @click="resetForm" 
+              class="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
+              キャンセルして新規作成にする
+            </button>
+            <button 
+              type="submit" 
+              :class="recipeForm.id ? 'bg-blue-600 hover:bg-blue-700' : 'bg-emerald-600 hover:bg-emerald-700'"
+              class="w-full sm:w-auto text-white font-bold px-8 py-3 rounded-xl transition shadow flex items-center justify-center space-x-2">
+              <i :class="recipeForm.id ? 'fa-solid fa-floppy-disk' : 'fa-solid fa-plus'"></i>
+              <span>{{ recipeForm.id ? '修正内容を上書き保存する' : 'マイレシピに新規保存する' }}</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ================= TAB 3: 今週の献立 & 買い物リスト ================= -->
+      <section v-if="activeTab === 'planner'" class="space-y-6">
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-6">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <h2 class="text-xl font-bold text-slate-800">献立プランナー＆自動買い物リスト</h2>
+              <p class="text-slate-500 text-xs">手持ちレシピから今週のメニューを選ぶと、必要な材料を自動で集計します</p>
+            </div>
+            <button 
+              @click="clearMealPlanner" 
+              class="text-xs text-slate-400 hover:text-red-600 underline self-start sm:self-auto">
+              献立計画をクリア
+            </button>
+          </div>
+
+          <!-- Weekly Days Planner Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-7 gap-3">
+            <div 
+              v-for="(dayName, dIdx) in daysOfWeek" 
+              :key="dIdx" 
+              class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2">
+              <div class="font-bold text-center text-xs py-1 bg-slate-200/70 text-slate-700 rounded-lg">
+                {{ dayName }}
+              </div>
+
+              <!-- Selected Recipe Card for this day -->
+              <div v-if="mealPlan[dIdx]" class="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1 shadow-sm text-xs relative group">
+                <div class="font-bold text-emerald-900 leading-tight line-clamp-2">
+                  {{ mealPlan[dIdx].title }}
+                </div>
+                <div class="text-[10px] text-slate-400 flex items-center justify-between">
+                  <span>{{ mealPlan[dIdx].servings || '1食分' }}</span>
+                  <button @click="removeFromMealPlan(dIdx)" class="text-slate-300 hover:text-red-500 p-0.5">
+                    <i class="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Empty Slot Button -->
+              <button 
+                v-else 
+                @click="openSelectRecipeForPlanModal(dIdx)" 
+                class="flex-1 py-4 border-2 border-dashed border-slate-200 hover:border-emerald-400 rounded-lg text-slate-400 hover:text-emerald-600 transition text-xs flex flex-col items-center justify-center space-y-1">
+                <i class="fa-solid fa-plus text-sm"></i>
+                <span class="text-[10px]">レシピをセット</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Generated Shopping List Section -->
+          <div class="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-5 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="font-bold text-emerald-900 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-cart-shopping text-emerald-600"></i>
+                <span>まとめ買い物リスト（{{ shoppingList.length }}項目）</span>
+              </h3>
+              <button 
+                v-if="shoppingList.length > 0" 
+                @click="copyShoppingListToClipboard" 
+                class="text-xs font-bold text-emerald-700 hover:text-emerald-900 bg-white px-3 py-1.5 rounded-lg border border-emerald-200 transition flex items-center gap-1 shadow-sm">
+                <i class="fa-solid fa-copy"></i> テキストでコピー
+              </button>
+            </div>
+
+            <div v-if="shoppingList.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+              <label 
+                v-for="(item, idx) in shoppingList" 
+                :key="idx" 
+                :class="item.checked ? 'bg-slate-100 text-slate-400 line-through' : 'bg-white text-slate-800 shadow-sm border-slate-200'"
+                class="p-2.5 rounded-xl border flex items-center space-x-2 cursor-pointer transition">
+                <input type="checkbox" v-model="item.checked" class="rounded text-emerald-600 focus:ring-emerald-500">
+                <span class="font-bold flex-1 truncate">{{ item.name }}</span>
+                <span class="text-[11px] text-slate-400 shrink-0">{{ item.amounts.join(' + ') }}</span>
+              </label>
+            </div>
+
+            <p v-else class="text-xs text-slate-400 text-center py-4">
+              上の曜日枠にレシピをセットすると、材料が一括で買い物リストとして生成されます。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TAB 4: マイレシピ専用 AI相談 ================= -->
+      <section v-if="activeTab === 'ai-assistant'" class="max-w-4xl mx-auto space-y-4">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[70vh] overflow-hidden">
+          <!-- Chat Header -->
+          <div class="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-10 h-10 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold text-lg shadow-sm">
+                <i class="fa-solid fa-robot"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-800 text-sm">マイレシピ専属 AIシェフ</h3>
+                <p class="text-[11px] text-slate-500">あなたが保存した手持ちレシピ（現在{{ recipes.length }}件）を把握してアドバイスします</p>
+              </div>
+            </div>
+            <button @click="clearAiChat" class="text-xs text-slate-400 hover:text-slate-600">
+              <i class="fa-solid fa-arrows-rotate mr-1"></i> 履歴クリア
+            </button>
+          </div>
+
+          <!-- Chat Messages Area -->
+          <div class="flex-1 p-4 overflow-y-auto space-y-4 custom-scrollbar bg-slate-50/50">
+            <div 
+              v-for="(msg, idx) in aiMessages" 
+              :key="idx" 
+              :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+              class="flex items-start space-x-2">
+              
+              <div v-if="msg.role === 'model'" class="w-7 h-7 bg-emerald-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-1">
+                <i class="fa-solid fa-utensils"></i>
+              </div>
+
+              <div 
+                :class="msg.role === 'user' ? 'bg-emerald-600 text-white rounded-2xl rounded-tr-none' : 'bg-white text-slate-800 border border-slate-200 rounded-2xl rounded-tl-none shadow-sm'"
+                class="p-3.5 text-xs sm:text-sm max-w-[85%] leading-relaxed whitespace-pre-wrap">
+                {{ msg.text }}
+              </div>
+            </div>
+
+            <div v-if="isAiThinking" class="flex items-center space-x-2 text-slate-400 text-xs py-2">
+              <i class="fa-solid fa-circle-notch fa-spin"></i>
+              <span>マイレシピの情報を参照して回答を作成中...</span>
+            </div>
+          </div>
+
+          <!-- Quick Prompts -->
+          <div class="px-4 py-2 bg-white border-t border-slate-100 flex gap-2 overflow-x-auto text-xs text-slate-600 custom-scrollbar">
+            <button @click="sendQuickAiQuery('私のマイレシピ集の中から、15分以内で作れるおすすめの夕食メニューを提案して')" class="shrink-0 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition">
+              ⏱️ 15分以内で作れる時短レシピは？
+            </button>
+            <button @click="sendQuickAiQuery('登録済みのレシピを使って、3日分の夕食の献立バランスを組んで')" class="shrink-0 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition">
+              📅 3日分の献立を考えて
+            </button>
+          </div>
+
+          <!-- Chat Input -->
+          <form @submit.prevent="sendAiMessage" class="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
+            <input 
+              v-model="aiInput" 
+              type="text" 
+              placeholder="質問を入力（例: 登録したハンバーグの分量を4人分に換算して）" 
+              class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <button 
+              type="submit" 
+              :disabled="isAiThinking || !aiInput.trim()" 
+              class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm transition">
+              送信
+            </button>
+          </form>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ================= MODAL: レシピ詳細＆調理モード ================= -->
+    <div v-if="detailRecipe" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        
+        <!-- Header Banner Image -->
+        <div v-if="detailRecipe.imageUrl" class="relative h-48 sm:h-56 w-full bg-slate-900 shrink-0">
+          <img :src="detailRecipe.imageUrl" :alt="detailRecipe.title" class="w-full h-full object-cover">
+          <div class="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
+          <button @click="detailRecipe = null" class="absolute top-4 right-4 bg-slate-900/60 text-white hover:bg-slate-900 rounded-full w-8 h-8 flex items-center justify-center text-sm transition backdrop-blur-sm">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+          <div class="absolute bottom-3 left-6 right-6">
+            <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500 text-white shadow-sm inline-block mb-1">
+              {{ detailRecipe.category || '未分類' }}
+            </span>
+            <h2 class="font-bold text-white text-xl leading-snug drop-shadow-sm">{{ detailRecipe.title }}</h2>
+          </div>
+        </div>
+
+        <!-- Scrollable Modal Content -->
+        <div class="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
+          
+          <!-- Standard Modal Header (if no banner image) -->
+          <div v-if="!detailRecipe.imageUrl" class="flex justify-between items-start border-b border-slate-100 pb-3">
+            <div>
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                {{ detailRecipe.category || '未分類' }}
+              </span>
+              <h2 class="font-bold text-slate-800 text-xl mt-1.5 leading-tight">{{ detailRecipe.title }}</h2>
+            </div>
+            <button @click="detailRecipe = null" class="text-slate-400 hover:text-slate-600 text-xl p-1">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <!-- Timer Tool -->
+          <div class="bg-slate-800 text-white p-3 rounded-xl flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-stopwatch text-emerald-400 text-base"></i>
+              <span class="font-bold">調理タイマー:</span>
+              <span class="font-mono text-base font-bold text-amber-300">{{ formatTimer(timerSeconds) }}</span>
+            </div>
+            <div class="flex space-x-1">
+              <button @click="startTimer(180)" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded">3分</button>
+              <button @click="startTimer(300)" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded">5分</button>
+              <button @click="startTimer(600)" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded">10分</button>
+              <button v-if="timerRunning" @click="stopTimer" class="px-2 py-1 bg-red-600 hover:bg-red-500 rounded font-bold">停止</button>
+            </div>
+          </div>
+
+          <!-- Step-by-Step Cooking Mode -->
+          <div v-if="detailRecipe.steps && detailRecipe.steps.length > 0" class="space-y-3">
+            <h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5 border-b pb-1">
+              <i class="fa-solid fa-list-check text-emerald-600"></i> 作り方ステップ
+            </h4>
+            <div class="space-y-2 text-xs">
+              <label 
+                v-for="(step, idx) in detailRecipe.steps" 
+                :key="idx" 
+                :class="activeStepChecks[idx] ? 'bg-slate-100 text-slate-400 line-through' : 'bg-white border-slate-200 text-slate-800 shadow-sm'"
+                class="p-3 rounded-xl border flex items-start space-x-3 cursor-pointer transition">
+                <input type="checkbox" v-model="activeStepChecks[idx]" class="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500">
+                <span class="font-bold shrink-0 text-emerald-800">#{{ idx + 1 }}</span>
+                <span class="leading-relaxed whitespace-pre-line">{{ step }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="p-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs">
+          <a 
+            v-if="detailRecipe.url" 
+            :href="detailRecipe.url" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            class="text-emerald-700 hover:underline font-bold flex items-center gap-1">
+            <span>元Webサイトを開く</span>
+            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+          </a>
+          <span v-else class="text-slate-400">オリジナル登録</span>
+
+          <div class="flex space-x-2">
+            <button 
+              @click="confirmDeleteRecipe(detailRecipe)" 
+              class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-xl transition flex items-center space-x-1">
+              <i class="fa-solid fa-trash-can"></i>
+              <span>削除</span>
+            </button>
+            <button 
+              @click="openEditModal(detailRecipe); detailRecipe = null;" 
+              class="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-xl transition">
+              <i class="fa-solid fa-pen-to-square mr-1"></i>修正
+            </button>
+            <button 
+              @click="detailRecipe = null" 
+              class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition">
+              閉じる
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ================= MODAL: 削除確認カスタムダイアログ ================= -->
+    <div v-if="recipeToDelete" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+        <div class="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto text-xl">
+          <i class="fa-solid fa-trash-can"></i>
+        </div>
+        <div class="space-y-1">
+          <h3 class="font-bold text-slate-800 text-base">このレシピを削除しますか？</h3>
+          <p class="text-xs text-slate-600 font-bold bg-slate-100 p-2 rounded-lg">
+            「{{ recipeToDelete.title }}」
+          </p>
+          <p class="text-[11px] text-slate-400">※この1件のみがマイレシピから削除されます。この操作は取り消せません。</p>
+        </div>
+        <div class="flex space-x-2 pt-2 text-xs">
+          <button 
+            @click="recipeToDelete = null" 
+            class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
+            キャンセル
+          </button>
+          <button 
+            @click="executeDeleteRecipe" 
+            class="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition shadow">
+            この1件を削除する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= MODAL: 献立追加用レシピ選択 ================= -->
+    <div v-if="selectingPlanDayIdx !== null" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4 max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h3 class="font-bold text-slate-800 text-sm">
+            {{ daysOfWeek[selectingPlanDayIdx] }}の献立を選択
+          </h3>
+          <button @click="selectingPlanDayIdx = null" class="text-slate-400 hover:text-slate-600">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="overflow-y-auto flex-1 space-y-2 custom-scrollbar pr-1">
+          <div 
+            v-for="r in recipes" 
+            :key="r.id" 
+            @click="selectRecipeForMealPlan(r)" 
+            class="p-3 border border-slate-200 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/50 cursor-pointer transition text-xs space-y-1">
+            <div class="font-bold text-slate-800">{{ r.title }}</div>
+            <div class="text-[11px] text-slate-400 flex justify-between">
+              <span>{{ r.category || '未分類' }}</span>
+              <span>{{ r.cookingTime || '' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= MODAL: Gemini API Key 設定 ================= -->
+    <div v-if="showApiKeyModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-key text-amber-500"></i>
+            <span>Gemini APIキー設定（AI自動取り込み用）</span>
+          </h3>
+          <button @click="showApiKeyModal = false" class="text-slate-400 hover:text-slate-600 text-base">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="space-y-2 text-slate-600 leading-relaxed">
+          <p>「URL/画像からのAI自動取り込み」や「AI相談」機能を使用するには、Google Gemini APIキーが必要です。</p>
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-900 text-[11px] space-y-1">
+            <p class="font-bold">🔑 無料取得の手順（1分で完了）:</p>
+            <ol class="list-decimal list-inside space-y-0.5">
+              <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" class="text-blue-600 font-bold underline">Google AI Studio</a> にアクセス（Googleアカウントでログイン）</li>
+              <li>「Create API key」を押してキーをコピー</li>
+              <li>下の枠に貼り付けて「保存」を押す</li>
+            </ol>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">API Key</label>
+          <input 
+            v-model="userApiKey" 
+            type="password" 
+            placeholder="AIzaSy..." 
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500">
+          <p class="text-[10px] text-slate-400 mt-1">※APIキーはお使いのスマホ（ブラウザ）にのみ安全に保存されます。</p>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button 
+            @click="showApiKeyModal = false" 
+            class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
+            キャンセル
+          </button>
+          <button 
+            @click="saveApiKey" 
+            class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition shadow">
+            APIキーを保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Bottom Navigation Bar -->
+    <nav class="md:hidden sticky bottom-0 bg-white border-t border-slate-200 flex justify-around py-2.5 px-1 z-40 text-[10px] font-medium shadow-lg">
+      <button 
+        @click="activeTab = 'recipes'" 
+        :class="activeTab === 'recipes' ? 'text-emerald-700 font-bold' : 'text-slate-500'" 
+        class="flex flex-col items-center space-y-1">
+        <i class="fa-solid fa-utensils text-base"></i>
+        <span>マイレシピ</span>
+      </button>
+      <button 
+        @click="switchToAddNewTab" 
+        :class="activeTab === 'add' ? 'text-emerald-700 font-bold' : 'text-slate-500'" 
+        class="flex flex-col items-center space-y-1">
+        <i class="fa-solid fa-plus text-base"></i>
+        <span>登録/AI</span>
+      </button>
+      <button 
+        @click="activeTab = 'planner'" 
+        :class="activeTab === 'planner' ? 'text-emerald-700 font-bold' : 'text-slate-500'" 
+        class="flex flex-col items-center space-y-1">
+        <i class="fa-solid fa-calendar-days text-base"></i>
+        <span>献立＆買い物</span>
+      </button>
+      <button 
+        @click="activeTab = 'ai-assistant'" 
+        :class="activeTab === 'ai-assistant' ? 'text-emerald-700 font-bold' : 'text-slate-500'" 
+        class="flex flex-col items-center space-y-1">
+        <i class="fa-solid fa-wand-magic-sparkles text-base"></i>
+        <span>AI相談</span>
+      </button>
+    </nav>
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const activeTab = ref('recipes');
+        const toastMessage = ref('');
+        const aiErrorMessage = ref('');
+
+        const showToast = (msg) => {
+          toastMessage.value = msg;
+          setTimeout(() => { toastMessage.value = ''; }, 3500);
+        };
+
+        // Data: Personal Saved Recipes
+        const recipes = ref([]);
+        const searchQuery = ref('');
+        const selectedCategory = ref('');
+        const selectedTag = ref('');
+        const selectedPantryIngredients = ref([]);
+        const sortBy = ref('newest');
+
+        const commonPantryList = ['豚肉', '鶏肉', '牛肉', 'キャベツ', '玉ねぎ', '卵', '豆腐', 'もやし', 'じゃがいも', '人参'];
+
+        // Add Recipe Mode & Multi-Image parsing
+        const addMode = ref('ai');
+        const aiImportInput = ref('');
+        const aiImages = ref([]);
+        const isParsingWithAi = ref(false);
+
+        // API Key Modal State
+        const showApiKeyModal = ref(false);
+        const userApiKey = ref('');
+
+        // Delete Modal State
+        const recipeToDelete = ref(null);
+
+        // Recipe Form State
+        const recipeForm = ref({
+          id: null,
+          title: '',
+          category: '主菜',
+          cookingTime: '',
+          servings: '2人分',
+          rating: 5,
+          source: '',
+          url: '',
+          imageUrl: '',
+          ingredients: [{ name: '', amount: '' }],
+          steps: [''],
+          tagsStr: '',
+          notes: ''
+        });
+
+        // Helper: Ensure every recipe has a guaranteed unique ID
+        const generateUniqueId = () => {
+          return 'rec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+        };
+
+        // Image Selection Helper
+        const processImageFile = (file, callback) => {
+          if (!file || !file.type.startsWith('image/')) return;
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
+              const maxDim = 1000;
+
+              if (width > height) {
+                if (width > maxDim) {
+                  height = Math.round((height * maxDim) / width);
+                  width = maxDim;
+                }
+              } else {
+                if (height > maxDim) {
+                  width = Math.round((width * maxDim) / height);
+                  height = maxDim;
+                }
+              }
+
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const base64Pure = dataUrl.split(',')[1];
+              callback(dataUrl, base64Pure);
+            };
+            img.src = e.target.result;
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const handleImageSelect = (e) => {
+          const files = e.target.files;
+          if (files && files.length > 0) {
+            Array.from(files).forEach(file => {
+              processImageFile(file, (dataUrl, base64Pure) => {
+                aiImages.value.push({ dataUrl, base64Pure });
+              });
+            });
+            e.target.value = '';
+          }
+        };
+
+        const removeAiImage = (idx) => {
+          aiImages.value.splice(idx, 1);
+        };
+
+        const clearAllAiImages = () => {
+          aiImages.value = [];
+        };
+
+        const handleFormImageSelect = (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (file) {
+            processImageFile(file, (dataUrl) => {
+              recipeForm.value.imageUrl = dataUrl;
+            });
+          }
+        };
+
+        // Detail View & Timer
+        const detailRecipe = ref(null);
+        const activeStepChecks = ref([]);
+        const timerSeconds = ref(0);
+        const timerRunning = ref(false);
+        let timerInterval = null;
+
+        // Weekly Planner
+        const daysOfWeek = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
+        const mealPlan = ref([null, null, null, null, null, null, null]);
+        const selectingPlanDayIdx = ref(null);
+
+        // AI Chat Assistant
+        const aiMessages = ref([
+          {
+            role: 'model',
+            text: 'こんにちは！あなたのマイレシピ専用シェフAIです。登録されているレシピを参考に「今夜のおすすめ」「分量の計算」「あまり物の組み合わせ」など何でも相談してくださいね！'
+          }
+        ]);
+        const aiInput = ref('');
+        const isAiThinking = ref(false);
+
+        // Gemini API Setup (Matches initial version: gemini-3-flash-preview)
+        const getApiKey = () => {
+          return (userApiKey.value && userApiKey.value.trim()) || localStorage.getItem('my_recipe_gemini_api_key') || "";
+        };
+
+        const getApiUrl = () => {
+          const key = getApiKey();
+          return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`;
+        };
+
+        // LocalStorage Load & Auto-Sanitize IDs
+        onMounted(() => {
+          const savedKey = localStorage.getItem('my_recipe_gemini_api_key');
+          if (savedKey) userApiKey.value = savedKey;
+
+          const saved = localStorage.getItem('my_personal_recipe_vault');
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed)) {
+                recipes.value = parsed.map(r => ({
+                  ...r,
+                  id: (r && r.id) ? String(r.id) : generateUniqueId()
+                }));
+                saveRecipesToStorage();
+              }
+            } catch (e) {
+              console.error('Failed to load recipes:', e);
+            }
+          }
+        });
+
+        const saveApiKey = () => {
+          localStorage.setItem('my_recipe_gemini_api_key', userApiKey.value.trim());
+          showApiKeyModal.value = false;
+          showToast('APIキーを保存しました！AI機能が使用可能です。');
+        };
+
+        const saveRecipesToStorage = () => {
+          localStorage.setItem('my_personal_recipe_vault', JSON.stringify(recipes.value));
+        };
+
+        const switchToAddNewTab = () => {
+          resetForm();
+          activeTab.value = 'add';
+        };
+
+        // Available Categories & Tags
+        const availableCategories = computed(() => {
+          const cats = new Set();
+          recipes.value.forEach(r => { if (r.category) cats.add(r.category); });
+          return Array.from(cats);
+        });
+
+        const allTags = computed(() => {
+          const tags = new Set();
+          recipes.value.forEach(r => {
+            if (r.tags && Array.isArray(r.tags)) {
+              r.tags.forEach(t => tags.add(t));
+            }
+          });
+          return Array.from(tags);
+        });
+
+        // Filtered Recipes Logic
+        const filteredRecipes = computed(() => {
+          return recipes.value.filter(r => {
+            const q = searchQuery.value.toLowerCase().trim();
+            const matchesSearch = !q || 
+              (r.title && r.title.toLowerCase().includes(q)) ||
+              (r.notes && r.notes.toLowerCase().includes(q)) ||
+              (r.ingredients && r.ingredients.some(i => i.name && i.name.toLowerCase().includes(q))) ||
+              (r.steps && r.steps.some(s => s && s.toLowerCase().includes(q)));
+
+            const matchesCat = !selectedCategory.value || r.category === selectedCategory.value;
+            const matchesTag = !selectedTag.value || (r.tags && r.tags.includes(selectedTag.value));
+
+            const matchesPantry = selectedPantryIngredients.value.length === 0 || 
+              selectedPantryIngredients.value.every(pIng => 
+                r.ingredients && r.ingredients.some(i => i.name && i.name.includes(pIng))
+              );
+
+            return matchesSearch && matchesCat && matchesTag && matchesPantry;
+          }).sort((a, b) => {
+            if (sortBy.value === 'rating') return (b.rating || 0) - (a.rating || 0);
+            if (sortBy.value === 'title') return (a.title || '').localeCompare(b.title || '', 'ja');
+            if (sortBy.value === 'time') {
+              const timeA = parseInt(a.cookingTime) || 999;
+              const timeB = parseInt(b.cookingTime) || 999;
+              return timeA - timeB;
+            }
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          });
+        });
+
+        const togglePantryIngredient = (ing) => {
+          const idx = selectedPantryIngredients.value.indexOf(ing);
+          if (idx >= 0) {
+            selectedPantryIngredients.value.splice(idx, 1);
+          } else {
+            selectedPantryIngredients.value.push(ing);
+          }
+        };
+
+        const resetFilters = () => {
+          searchQuery.value = '';
+          selectedCategory.value = '';
+          selectedTag.value = '';
+          selectedPantryIngredients.value = [];
+        };
+
+        const getIngredientsText = (ings) => {
+          if (!ings || !ings.length) return '';
+          return ings.map(i => i.name).filter(Boolean).join('、 ');
+        };
+
+        // Form Row Controls
+        const addIngredientRow = () => {
+          recipeForm.value.ingredients.push({ name: '', amount: '' });
+        };
+        const removeIngredientRow = (idx) => {
+          recipeForm.value.ingredients.splice(idx, 1);
+        };
+        const addStepRow = () => {
+          recipeForm.value.steps.push('');
+        };
+        const removeStepRow = (idx) => {
+          recipeForm.value.steps.splice(idx, 1);
+        };
+
+        // Save Logic
+        const saveNewRecipe = () => {
+          if (!recipeForm.value.title.trim()) return;
+
+          const tags = recipeForm.value.tagsStr 
+            ? recipeForm.value.tagsStr.split(/[,、]/).map(s => s.trim()).filter(Boolean)
+            : [];
+
+          const cleanIngredients = recipeForm.value.ingredients.filter(i => i.name && i.name.trim());
+          const cleanSteps = recipeForm.value.steps.filter(s => s && s.trim());
+
+          const targetId = recipeForm.value.id;
+
+          if (targetId) {
+            const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
+            if (idx !== -1) {
+              recipes.value[idx] = {
+                ...recipes.value[idx],
+                ...recipeForm.value,
+                id: targetId,
+                tags,
+                ingredients: cleanIngredients,
+                steps: cleanSteps,
+                updatedAt: new Date().toISOString()
+              };
+              showToast('レシピを修正・更新しました！');
+            } else {
+              const newEntry = {
+                id: targetId,
+                ...recipeForm.value,
+                tags,
+                ingredients: cleanIngredients,
+                steps: cleanSteps,
+                createdAt: new Date().toISOString()
+              };
+              recipes.value.unshift(newEntry);
+              showToast('レシピを保存しました！');
+            }
+          } else {
+            const newId = generateUniqueId();
+            const newEntry = {
+              ...recipeForm.value,
+              id: newId,
+              tags,
+              ingredients: cleanIngredients,
+              steps: cleanSteps,
+              createdAt: new Date().toISOString()
+            };
+            recipes.value.unshift(newEntry);
+            showToast('マイレシピに保存しました！');
+          }
+
+          saveRecipesToStorage();
+          resetForm();
+          activeTab.value = 'recipes';
+        };
+
+        const resetForm = () => {
+          recipeForm.value = {
+            id: null,
+            title: '',
+            category: '主菜',
+            cookingTime: '',
+            servings: '2人分',
+            rating: 5,
+            source: '',
+            url: '',
+            imageUrl: '',
+            ingredients: [{ name: '', amount: '' }],
+            steps: [''],
+            tagsStr: '',
+            notes: ''
+          };
+          aiImportInput.value = '';
+          clearAllAiImages();
+        };
+
+        const openEditModal = (recipe) => {
+          if (!recipe) return;
+          if (!recipe.id) {
+            recipe.id = generateUniqueId();
+            saveRecipesToStorage();
+          }
+
+          recipeForm.value = {
+            id: String(recipe.id),
+            title: recipe.title || '',
+            category: recipe.category || '主菜',
+            cookingTime: recipe.cookingTime || '',
+            servings: recipe.servings || '',
+            rating: recipe.rating || 5,
+            source: recipe.source || '',
+            url: recipe.url || '',
+            imageUrl: recipe.imageUrl || '',
+            ingredients: recipe.ingredients && recipe.ingredients.length ? JSON.parse(JSON.stringify(recipe.ingredients)) : [{ name: '', amount: '' }],
+            steps: recipe.steps && recipe.steps.length ? [...recipe.steps] : [''],
+            tagsStr: recipe.tags ? recipe.tags.join(', ') : '',
+            notes: recipe.notes || ''
+          };
+          addMode.value = 'manual';
+          activeTab.value = 'add';
+        };
+
+        // Safe Single Item Delete Logic
+        const confirmDeleteRecipe = (recipe) => {
+          if (!recipe) return;
+          if (!recipe.id) {
+            recipe.id = generateUniqueId();
+            saveRecipesToStorage();
+          }
+          recipeToDelete.value = recipe;
+        };
+
+        const executeDeleteRecipe = () => {
+          if (recipeToDelete.value) {
+            const target = recipeToDelete.value;
+            const targetId = String(target.id);
+
+            recipes.value = recipes.value.filter(r => {
+              if (r && r.id) {
+                return String(r.id) !== targetId;
+              }
+              return r !== target;
+            });
+
+            saveRecipesToStorage();
+
+            if (detailRecipe.value && String(detailRecipe.value.id) === targetId) {
+              detailRecipe.value = null;
+            }
+
+            recipeToDelete.value = null;
+            showToast('レシピを1件削除しました');
+          }
+        };
+
+        // Gemini AI Parsing (Original Initial Code Logic)
+        const executeAiImport = async () => {
+          if ((!aiImportInput.value.trim() && aiImages.value.length === 0) || isParsingWithAi.value) return;
+
+          const keyToUse = getApiKey();
+          if (!keyToUse) {
+            showApiKeyModal.value = true;
+            return;
+          }
+
+          isParsingWithAi.value = true;
+          aiErrorMessage.value = '';
+          const promptText = aiImportInput.value.trim();
+
+          const systemPrompt = `
+あなたはレシピ情報の高度な構造化解析AIです。ユーザーが提供した写真/スクリーンショット画像（1枚または複数枚）、URL、料理名、またはレシピ文章から、正確なレシピ情報を抽出して構造化JSONを出力してください。
+
+【出力JSONフォーマット】
+{
+  "title": "正確なレシピ名",
+  "category": "カテゴリ（主菜, 副菜, スープ, デザート 等）",
+  "cookingTime": "調理時間の目安（例: 15分）",
+  "servings": "分量（例: 2人分）",
+  "source": "提供元名（料理本/スクリーンショット/クックパッド/クラシル等）",
+  "ingredients": [
+    {"name": "材料名1", "amount": "分量1"},
+    {"name": "材料2", "amount": "分量2"}
+  ],
+  "steps": [
+    "手順1",
+    "手順2"
+  ],
+  "tags": ["時短", "節約"],
+  "notes": "重要ポイントや隠し味メモ"
+}
+Markdownブロックは除外して純粋なJSONのみを出力してください。
+`;
+
+          try {
+            const parts = [];
+            if (promptText) {
+              parts.push({ text: `以下のレシピ情報/URLを解析し、該当する正確なレシピを構造化してください:\n${promptText}` });
+            } else {
+              parts.push({ text: `添付された${aiImages.value.length}枚の写真/スクリーンショットから全体のレシピ情報を総合的に読み取り、正確に構造化してください。` });
+            }
+
+            aiImages.value.forEach(imgObj => {
+              parts.push({
+                inlineData: {
+                  mimeType: "image/jpeg",
+                  data: imgObj.base64Pure
+                }
+              });
+            });
+
+            const payload = {
+              contents: [{ parts }],
+              systemInstruction: { parts: [{ text: systemPrompt }] }
+            };
+
+            if (promptText && aiImages.value.length === 0) {
+              payload.tools = [{ "google_search": {} }];
+            }
+
+            const response = await fetch(getApiUrl(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+              const errData = await response.json().catch(() => ({}));
+              throw new Error(errData.error?.message || `HTTP エラー ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            const textResp = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+            let cleaned = textResp.replace(/```json/g, '').replace(/```/g, '').trim();
+            const sIdx = cleaned.indexOf('{');
+            const eIdx = cleaned.lastIndexOf('}');
+            if (sIdx !== -1 && eIdx !== -1) {
+              cleaned = cleaned.substring(sIdx, eIdx + 1);
+            }
+
+            const parsed = JSON.parse(cleaned);
+            const currentEditingId = recipeForm.value.id;
+
+            recipeForm.value = {
+              id: currentEditingId,
+              title: parsed.title || '取り込みレシピ',
+              category: parsed.category || '主菜',
+              cookingTime: parsed.cookingTime || '約20分',
+              servings: parsed.servings || '2人分',
+              rating: 5,
+              source: parsed.source || (aiImages.value.length > 0 ? `写真/スクショ` : 'Web取り込み'),
+              url: promptText.startsWith('http') ? promptText : '',
+              imageUrl: aiImages.value.length > 0 ? aiImages.value[0].dataUrl : recipeForm.value.imageUrl,
+              ingredients: parsed.ingredients && parsed.ingredients.length ? parsed.ingredients : [{ name: '', amount: '' }],
+              steps: parsed.steps && parsed.steps.length ? parsed.steps : [''],
+              tagsStr: parsed.tags ? parsed.tags.join(', ') : '取り込み',
+              notes: parsed.notes || ''
+            };
+
+            addMode.value = 'manual';
+            showToast('AIによる自動解析が完了しました！内容を確認・保存してください。');
+
+          } catch (err) {
+            console.error('AI parsing error:', err);
+            aiErrorMessage.value = err.message || 'データ解析に失敗しました。';
+          } finally {
+            isParsingWithAi.value = false;
+          }
+        };
+
+        // Detail Modal & Timer Logic
+        const openDetailModal = (recipe) => {
+          if (!recipe.id) {
+            recipe.id = generateUniqueId();
+            saveRecipesToStorage();
+          }
+          detailRecipe.value = recipe;
+          activeStepChecks.value = new Array(recipe.steps ? recipe.steps.length : 0).fill(false);
+        };
+
+        const startTimer = (secs) => {
+          stopTimer();
+          timerSeconds.value = secs;
+          timerRunning.value = true;
+          timerInterval = setInterval(() => {
+            if (timerSeconds.value > 0) {
+              timerSeconds.value--;
+            } else {
+              stopTimer();
+              showToast('⏰ タイマーの時間になりました！');
+            }
+          }, 1000);
+        };
+
+        const stopTimer = () => {
+          if (timerInterval) clearInterval(timerInterval);
+          timerRunning.value = false;
+        };
+
+        const formatTimer = (s) => {
+          const m = Math.floor(s / 60);
+          const secs = s % 60;
+          return `${m.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        };
+
+        // Weekly Meal Planner Logic
+        const addToMealPlanner = (recipe) => {
+          const emptyIdx = mealPlan.value.findIndex(p => p === null);
+          if (emptyIdx !== -1) {
+            mealPlan.value[emptyIdx] = recipe;
+            showToast(`「${daysOfWeek[emptyIdx]}」の献立に追加しました！`);
+            activeTab.value = 'planner';
+          } else {
+            mealPlan.value[0] = recipe;
+            showToast(`月曜日の献立を更新しました！`);
+            activeTab.value = 'planner';
+          }
+        };
+
+        const openSelectRecipeForPlanModal = (dIdx) => {
+          selectingPlanDayIdx.value = dIdx;
+        };
+
+        const selectRecipeForMealPlan = (recipe) => {
+          if (selectingPlanDayIdx.value !== null) {
+            mealPlan.value[selectingPlanDayIdx.value] = recipe;
+            selectingPlanDayIdx.value = null;
+            showToast('献立に登録しました');
+          }
+        };
+
+        const removeFromMealPlan = (dIdx) => {
+          mealPlan.value[dIdx] = null;
+        };
+
+        const clearMealPlanner = () => {
+          mealPlan.value = [null, null, null, null, null, null, null];
+        };
+
+        // Auto Aggregated Shopping List
+        const shoppingList = computed(() => {
+          const map = new Map();
+          mealPlan.value.forEach(recipe => {
+            if (recipe && recipe.ingredients) {
+              recipe.ingredients.forEach(ing => {
+                if (ing.name) {
+                  const key = ing.name.trim();
+                  if (!map.has(key)) {
+                    map.set(key, { name: key, amounts: [ing.amount || '適量'], checked: false });
+                  } else {
+                    map.get(key).amounts.push(ing.amount || '適量');
+                  }
+                }
+              });
+            }
+          });
+          return Array.from(map.values());
+        });
+
+        const copyShoppingListToClipboard = () => {
+          if (shoppingList.value.length === 0) return;
+          const txt = "【買い物リスト】\n" + shoppingList.value.map(i => `・${i.name} (${i.amounts.join(' + ')})`).join('\n');
+          
+          const el = document.createElement('textarea');
+          el.value = txt;
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+          showToast('買い物リストをクリップボードにコピーしました！');
+        };
+
+        // AI Chat for Personal Saved Recipes
+        const sendAiMessage = async () => {
+          if (!aiInput.value.trim() || isAiThinking.value) return;
+
+          const keyToUse = getApiKey();
+          if (!keyToUse) {
+            showApiKeyModal.value = true;
+            return;
+          }
+
+          const userText = aiInput.value.trim();
+          aiMessages.value.push({ role: 'user', text: userText });
+          aiInput.value = '';
+          isAiThinking.value = true;
+
+          const recipeSummary = recipes.value.map(r => ({
+            title: r.title,
+            category: r.category,
+            cookingTime: r.cookingTime,
+            ingredients: r.ingredients ? r.ingredients.map(i => i.name) : [],
+            notes: r.notes
+          }));
+
+          const systemPrompt = `
+あなたはユーザーのマイレシピ専用シェフAIです。
+ユーザーが手持ちのレシピ帳に登録している以下のレシピデータ（全${recipes.value.length}件）を踏まえてアドバイスしてください。
+
+【ユーザーのマイレシピ一覧】
+${JSON.stringify(recipeSummary, null, 2)}
+`;
+
+          try {
+            const payload = {
+              contents: aiMessages.value.map(m => ({
+                role: m.role,
+                parts: [{ text: m.text }]
+              })),
+              systemInstruction: { parts: [{ text: systemPrompt }] }
+            };
+
+            const response = await fetch(getApiUrl(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || '申し訳ありません。上手く回答を作成できませんでした。';
+
+            aiMessages.value.push({ role: 'model', text: reply });
+
+          } catch (err) {
+            console.error('AI chat error:', err);
+            aiMessages.value.push({ role: 'model', text: '通信エラーが発生しました。APIキーまたは通信状況をご確認ください。' });
+          } finally {
+            isAiThinking.value = false;
+          }
+        };
+
+        const sendQuickAiQuery = (txt) => {
+          aiInput.value = txt;
+          sendAiMessage();
+        };
+
+        const clearAiChat = () => {
+          aiMessages.value = [{
+            role: 'model',
+            text: 'チャット履歴をクリアしました。マイレシピに関する質問があればお気軽にどうぞ！'
+          }];
+        };
+
+        // JSON Export
+        const exportRecipesJson = () => {
+          const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recipes.value, null, 2));
+          const dlAnchor = document.createElement('a');
+          dlAnchor.setAttribute("href", dataStr);
+          dlAnchor.setAttribute("download", `my_recipe_vault_backup_${new Date().toISOString().slice(0,10)}.json`);
+          document.body.appendChild(dlAnchor);
+          dlAnchor.click();
+          dlAnchor.remove();
+          showToast('レシピデータをファイルに保存しました！');
+        };
+
+        return {
+          activeTab,
+          toastMessage,
+          aiErrorMessage,
+          recipes,
+          searchQuery,
+          selectedCategory,
+          selectedTag,
+          selectedPantryIngredients,
+          commonPantryList,
+          sortBy,
+          availableCategories,
+          allTags,
+          filteredRecipes,
+          togglePantryIngredient,
+          resetFilters,
+          getIngredientsText,
+          addMode,
+          aiImportInput,
+          aiImages,
+          handleImageSelect,
+          removeAiImage,
+          clearAllAiImages,
+          handleFormImageSelect,
+          isParsingWithAi,
+          executeAiImport,
+          showApiKeyModal,
+          userApiKey,
+          saveApiKey,
+          recipeForm,
+          addIngredientRow,
+          removeIngredientRow,
+          addStepRow,
+          removeStepRow,
+          saveNewRecipe,
+          resetForm,
+          openEditModal,
+          switchToAddNewTab,
+          confirmDeleteRecipe,
+          recipeToDelete,
+          executeDeleteRecipe,
+          detailRecipe,
+          activeStepChecks,
+          openDetailModal,
+          timerSeconds,
+          timerRunning,
+          startTimer,
+          stopTimer,
+          formatTimer,
+          daysOfWeek,
+          mealPlan,
+          selectingPlanDayIdx,
+          addToMealPlanner,
+          openSelectRecipeForPlanModal,
+          selectRecipeForMealPlan,
+          removeFromMealPlan,
+          clearMealPlanner,
+          shoppingList,
+          copyShoppingListToClipboard,
+          aiMessages,
+          aiInput,
+          isAiThinking,
+          sendAiMessage,
+          sendQuickAiQuery,
+          clearAiChat,
+          exportRecipesJson
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
