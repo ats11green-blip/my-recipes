@@ -919,6 +919,27 @@
             </div>
           </div>
 
+          <!-- Ingredients List -->
+          <div v-if="detailRecipe.ingredients && detailRecipe.ingredients.length > 0" class="space-y-3">
+            <div class="flex items-center justify-between border-b pb-1">
+              <h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-carrot text-emerald-600"></i> 材料・分量
+              </h4>
+              <span v-if="detailRecipe.servings" class="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                {{ detailRecipe.servings }}
+              </span>
+            </div>
+            <div class="bg-slate-50 rounded-xl border border-slate-200/80 divide-y divide-slate-200/60 text-xs">
+              <div 
+                v-for="(ing, idx) in detailRecipe.ingredients" 
+                :key="idx" 
+                class="px-3.5 py-2.5 flex items-center justify-between gap-3">
+                <span class="font-medium text-slate-800">{{ ing.name }}</span>
+                <span class="font-bold text-emerald-700 shrink-0">{{ ing.amount }}</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Step-by-Step Cooking Mode -->
           <div v-if="detailRecipe.steps && detailRecipe.steps.length > 0" class="space-y-3">
             <h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5 border-b pb-1">
