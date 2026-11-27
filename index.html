@@ -185,7 +185,7 @@
         <!-- Quick Data Actions -->
         <div class="flex items-center space-x-2">
           <button 
-            @click="showApiKeyModal = true" 
+            @click="openApiKeyModal" 
             title="Gemini APIキー設定（AI機能用）"
             class="bg-emerald-800 hover:bg-emerald-900 text-emerald-100 text-xs px-2.5 py-1.5 rounded-lg transition flex items-center space-x-1 border border-emerald-600">
             <i class="fa-solid fa-key text-amber-300"></i>
@@ -1213,7 +1213,7 @@
             <i class="fa-solid fa-key text-amber-500"></i>
             <span>Gemini APIキー設定（AI自動取り込み用）</span>
           </h3>
-          <button @click="showApiKeyModal = false" class="text-slate-400 hover:text-slate-600 text-base">
+          <button @click="closeApiKeyModal" class="text-slate-400 hover:text-slate-600 text-base">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
@@ -1237,7 +1237,28 @@
             type="password" 
             placeholder="AIzaSy..." 
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500">
-          <p class="text-[10px] text-slate-400 mt-1">※APIキーはお使いのスマホ（ブラウザ）にのみ安全に保存されます。</p>
+          <div class="flex items-start justify-between gap-2 mt-1">
+            <p class="text-[10px] text-slate-400 leading-relaxed">
+              ※APIキーはこのブラウザ内にだけ保存され、AI機能を使うとき以外は外部に送られません。
+              ただし暗号化はされないため、<strong class="text-slate-500">家族共用・職場などの共用端末では保存しないでください。</strong>
+            </p>
+            <button 
+              v-if="hasSavedApiKey" 
+              type="button" 
+              @click="deleteApiKey" 
+              class="shrink-0 text-[10px] text-red-500 hover:text-red-700 hover:underline font-bold">
+              キーを削除
+            </button>
+          </div>
+          <details class="mt-2 text-[10px] text-slate-500">
+            <summary class="cursor-pointer font-bold text-slate-600">万一キーが漏れたときの被害を減らすには（推奨）</summary>
+            <ul class="list-disc list-inside space-y-0.5 mt-1 leading-relaxed">
+              <li>Google AI Studio / Google Cloud のキー設定で「APIの制限」を Generative Language API のみにする</li>
+              <li>公開URLで使う場合は「ウェブサイトの制限」にそのURLを登録する</li>
+              <li>課金を有効にしている場合は、予算アラートを設定する</li>
+              <li>漏れた疑いがあれば、すぐにキーを削除して作り直す</li>
+            </ul>
+          </details>
         </div>
 
         <div>
@@ -1269,7 +1290,7 @@
 
         <div class="flex justify-end gap-2 pt-2">
           <button 
-            @click="showApiKeyModal = false" 
+            @click="closeApiKeyModal" 
             class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
             キャンセル
           </button>
@@ -1510,15 +1531,53 @@
           return /^[A-Za-z0-9._-]+$/.test(n) ? n : '';
         };
 
-        const getModelName = () => normalizeModelName(userModel.value) || DEFAULT_GEMINI_MODEL;
+        // Only *saved* settings are used for API calls. Values typed into the settings dialog
+        // take effect when "保存" is pressed; "キャンセル" discards them.
+        const API_KEY_STORAGE_KEY = 'my_recipe_gemini_api_key';
+        const savedModel = ref('');
+        const hasSavedApiKey = ref(false);
+        const getModelName = () => normalizeModelName(savedModel.value) || DEFAULT_GEMINI_MODEL;
 
-        const getApiKey = () => {
-          return (userApiKey.value && userApiKey.value.trim()) || localStorage.getItem('my_recipe_gemini_api_key') || "";
+        const readStorage = (key) => {
+          try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
         };
 
-        const getApiUrl = () => {
-          const key = getApiKey();
-          return `${GEMINI_API_BASE}/models/${getModelName()}:generateContent?key=${encodeURIComponent(key)}`;
+        const getApiKey = () => readStorage(API_KEY_STORAGE_KEY).trim();
+
+        // Call Gemini generateContent. The key goes in a request header, not in the URL,
+        // so it does not end up in URLs that may be logged.
+        const callGemini = (payload, apiKey = getApiKey()) => {
+          return fetch(`${GEMINI_API_BASE}/models/${getModelName()}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(payload)
+          });
+        };
+
+        // Extract the answer text from a generateContent result.
+        // Returns { text } or { text: '', reason } explaining why there is no answer.
+        const extractResponseText = (result) => {
+          const blockReason = result?.promptFeedback?.blockReason;
+          if (blockReason) {
+            return { text: '', reason: `入力内容がAIの安全基準によりブロックされました（${blockReason}）。` };
+          }
+          const cand = result?.candidates?.[0];
+          const parts = Array.isArray(cand?.content?.parts) ? cand.content.parts : [];
+          // Skip "thought" parts some models return; join the rest
+          const text = parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('').trim();
+          if (text) return { text };
+
+          const finish = cand?.finishReason;
+          const reasons = {
+            SAFETY: 'AIの安全基準により回答が止められました。',
+            RECITATION: '著作権などの理由で、AIが回答を控えました。',
+            MAX_TOKENS: '回答が長すぎて途中で打ち切られました。',
+            PROHIBITED_CONTENT: 'AIの利用規約により回答が止められました。'
+          };
+          return { text: '', reason: reasons[finish] || `AIから回答が返ってきませんでした${finish ? `（${finish}）` : ''}。` };
         };
 
         // Turn an error response into a readable message, with a hint when the model is the problem
@@ -1532,7 +1591,8 @@
         };
 
         const fetchAvailableModels = async () => {
-          const key = getApiKey();
+          // Use the key currently typed in the dialog (it may not be saved yet)
+          const key = userApiKey.value.trim() || getApiKey();
           if (!key) {
             modelListMessage.value = '先にAPIキーを入力してください。';
             return;
@@ -1540,7 +1600,9 @@
           isFetchingModels.value = true;
           modelListMessage.value = '';
           try {
-            const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1000&key=${encodeURIComponent(key)}`);
+            const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1000`, {
+              headers: { 'x-goog-api-key': key }
+            });
             if (!res.ok) throw new Error(await describeApiError(res));
             const data = await res.json();
             const names = (data.models || [])
@@ -1561,12 +1623,7 @@
 
         // LocalStorage Load & Auto-Sanitize IDs
         onMounted(() => {
-          const savedKey = localStorage.getItem('my_recipe_gemini_api_key');
-          if (savedKey) userApiKey.value = savedKey;
-          try {
-            const savedModel = localStorage.getItem(MODEL_STORAGE_KEY);
-            if (savedModel) userModel.value = savedModel;
-          } catch (e) { /* storage unavailable: use default model */ }
+          resetApiSettingsForm();
 
           let saved = null;
           try {
@@ -1609,17 +1666,56 @@
             modelListMessage.value = 'モデル名に使えない文字が含まれています（英数字・「.」「-」「_」のみ）。';
             return;
           }
+          const key = userApiKey.value.trim();
           try {
-            localStorage.setItem('my_recipe_gemini_api_key', userApiKey.value.trim());
+            if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+            else localStorage.removeItem(API_KEY_STORAGE_KEY);
             if (model) localStorage.setItem(MODEL_STORAGE_KEY, model);
             else localStorage.removeItem(MODEL_STORAGE_KEY);
           } catch (e) {
             storageErrorMessage.value = `設定を保存できませんでした。\n(${e && e.message ? e.message : e})`;
             return;
           }
+          userApiKey.value = key;
+          hasSavedApiKey.value = !!key;
           userModel.value = model;
+          savedModel.value = model;
           showApiKeyModal.value = false;
-          showToast(`設定を保存しました！（AIモデル: ${getModelName()}）`);
+          showToast(key
+            ? `設定を保存しました！（AIモデル: ${getModelName()}）`
+            : 'APIキーを削除しました。AI機能は使えなくなります。');
+        };
+
+        // Put the saved values back into the dialog (discarding unsaved edits)
+        const resetApiSettingsForm = () => {
+          userApiKey.value = getApiKey();
+          hasSavedApiKey.value = !!userApiKey.value;
+          savedModel.value = normalizeModelName(readStorage(MODEL_STORAGE_KEY));
+          userModel.value = savedModel.value;
+          modelListMessage.value = '';
+        };
+
+        const openApiKeyModal = () => {
+          resetApiSettingsForm();
+          showApiKeyModal.value = true;
+        };
+
+        const closeApiKeyModal = () => {
+          resetApiSettingsForm();
+          showApiKeyModal.value = false;
+        };
+
+        const deleteApiKey = () => {
+          if (!confirm('このブラウザに保存しているAPIキーを削除します。よろしいですか？')) return;
+          try {
+            localStorage.removeItem(API_KEY_STORAGE_KEY);
+          } catch (e) {
+            storageErrorMessage.value = `APIキーを削除できませんでした。\n(${e && e.message ? e.message : e})`;
+            return;
+          }
+          userApiKey.value = '';
+          hasSavedApiKey.value = false;
+          showToast('APIキーを削除しました。');
         };
 
         const isQuotaError = (e) => {
@@ -2065,13 +2161,78 @@
           }
         };
 
-        // Gemini AI Parsing (Original Initial Code Logic)
+        // Parse the AI answer into an object. Tolerates ```json fences or text around the JSON.
+        const parseAiRecipeJson = (text) => {
+          const tryParse = (t) => { try { return JSON.parse(t); } catch (e) { return undefined; } };
+          let data = tryParse(text.trim());
+          if (data === undefined) {
+            const cleaned = text.replace(/```(?:json)?/gi, '').trim();
+            const s = cleaned.indexOf('{');
+            const e = cleaned.lastIndexOf('}');
+            if (s !== -1 && e > s) data = tryParse(cleaned.substring(s, e + 1));
+          }
+          // Some models wrap the result in an array
+          if (Array.isArray(data)) data = data[0];
+          return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+        };
+
+        // Coerce AI output (shape is not guaranteed) into the recipe shape the form expects
+        const normalizeAiRecipe = (d) => {
+          const text = (v) => {
+            if (typeof v === 'string') return v.trim();
+            if (typeof v === 'number') return String(v);
+            return '';
+          };
+          const toList = (v) => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string') return v.split(/\r?\n/);
+            return [];
+          };
+
+          const ingredients = toList(d.ingredients).map(i => {
+            if (typeof i === 'string') {
+              // "豚肉 200g" / "豚肉：200g" → name + amount
+              const s = i.trim();
+              const m = s.match(/^(.+?)\s*[:：]\s*(.+)$/) || s.match(/^(.+)\s+(\S+)$/);
+              return m ? { name: m[1].trim(), amount: m[2].trim() } : { name: s, amount: '' };
+            }
+            if (i && typeof i === 'object') {
+              return { name: text(i.name ?? i.item ?? i.ingredient), amount: text(i.amount ?? i.quantity ?? i.qty) };
+            }
+            return null;
+          }).filter(i => i && i.name);
+
+          const steps = toList(d.steps ?? d.instructions).map(s => {
+            if (s && typeof s === 'object') return text(s.text ?? s.step ?? s.description ?? s.instruction);
+            // Drop leading "1." / "1)" / "①" numbering; the form numbers steps itself
+            return text(s).replace(/^(\d+[.)．、]\s*|[①-⑳]\s*)/, '');
+          }).filter(Boolean);
+
+          const tags = (Array.isArray(d.tags) ? d.tags : (typeof d.tags === 'string' ? d.tags.split(/[,、]/) : []))
+            .map(text).map(t => t.replace(/^#/, '')).filter(Boolean);
+
+          const notes = getNotesArray(Array.isArray(d.notes) ? d.notes.map(text) : text(d.notes));
+
+          return {
+            title: text(d.title),
+            category: text(d.category),
+            cookingTime: text(d.cookingTime),
+            servings: text(d.servings),
+            source: text(d.source),
+            ingredients,
+            steps,
+            tags,
+            notes
+          };
+        };
+
+        // Gemini AI Parsing
         const executeAiImport = async () => {
           if ((!aiImportInput.value.trim() && aiImages.value.length === 0) || isParsingWithAi.value) return;
 
           const keyToUse = getApiKey();
           if (!keyToUse) {
-            showApiKeyModal.value = true;
+            openApiKeyModal();
             return;
           }
 
@@ -2121,50 +2282,48 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
             });
 
             const payload = {
-              contents: [{ parts }],
-              systemInstruction: { parts: [{ text: systemPrompt }] }
+              contents: [{ role: 'user', parts }],
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              // Ask the API to return pure JSON (no Markdown, no extra text)
+              generationConfig: { responseMimeType: 'application/json' }
             };
 
-            
-
-            const response = await fetch(getApiUrl(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            const response = await callGemini(payload);
 
             if (!response.ok) {
               throw new Error(await describeApiError(response));
             }
 
             const result = await response.json();
-            const textResp = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const { text: textResp, reason } = extractResponseText(result);
+            if (!textResp) throw new Error(reason);
 
-            let cleaned = textResp.replace(/```json/g, '').replace(/```/g, '').trim();
-            const sIdx = cleaned.indexOf('{');
-            const eIdx = cleaned.lastIndexOf('}');
-            if (sIdx !== -1 && eIdx !== -1) {
-              cleaned = cleaned.substring(sIdx, eIdx + 1);
+            const parsed = parseAiRecipeJson(textResp);
+            if (!parsed) {
+              throw new Error('AIの回答をレシピとして読み取れませんでした。もう一度試すか、画像やテキストを変えてお試しください。');
+            }
+            const rec = normalizeAiRecipe(parsed);
+            if (!rec.title && rec.ingredients.length === 0 && rec.steps.length === 0) {
+              throw new Error('レシピ情報を読み取れませんでした。料理名・材料・作り方が写っている画像や、レシピの文章を指定してください。');
             }
 
-            const parsed = JSON.parse(cleaned);
             const currentEditingId = recipeForm.value.id;
-            const aiNotes = getNotesArray(parsed.notes);
+            const urlMatch = promptText.match(/https?:\/\/[^\s"'<>]+/);
 
             recipeForm.value = {
               id: currentEditingId,
-              title: parsed.title || '取り込みレシピ',
-              category: parsed.category || '主菜',
-              cookingTime: parsed.cookingTime || '約20分',
-              servings: parsed.servings || '2人分',
+              title: rec.title || '取り込みレシピ',
+              category: rec.category || '主菜',
+              cookingTime: rec.cookingTime || '約20分',
+              servings: rec.servings || '2人分',
               rating: 5,
-              source: parsed.source || (aiImages.value.length > 0 ? `写真/スクショ` : 'Web取り込み'),
-              url: promptText.startsWith('http') ? promptText : '',
+              source: rec.source || (aiImages.value.length > 0 ? `写真/スクショ` : 'Web取り込み'),
+              url: urlMatch ? urlMatch[0] : '',
               imageUrl: aiImages.value.length > 0 ? aiImages.value[0].dataUrl : recipeForm.value.imageUrl,
-              ingredients: parsed.ingredients && parsed.ingredients.length ? parsed.ingredients : [{ name: '', amount: '' }],
-              steps: parsed.steps && parsed.steps.length ? parsed.steps : [''],
-              tagsStr: parsed.tags ? parsed.tags.join(', ') : '取り込み',
-              notes: aiNotes.length ? aiNotes : ['']
+              ingredients: rec.ingredients.length ? rec.ingredients : [{ name: '', amount: '' }],
+              steps: rec.steps.length ? rec.steps : [''],
+              tagsStr: rec.tags.length ? rec.tags.join(', ') : '取り込み',
+              notes: rec.notes.length ? rec.notes : ['']
             };
 
             addMode.value = 'manual';
@@ -2343,17 +2502,36 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
         };
 
         // AI Chat for Personal Saved Recipes
+        // Build the conversation for the API:
+        // - skip error messages and the opening greeting (the API expects the user to speak first)
+        // - merge consecutive messages from the same side (e.g. a question whose answer failed)
+        const buildChatContents = (messages) => {
+          const contents = [];
+          messages.forEach(m => {
+            if (m.isError || !m.text) return;
+            if (contents.length === 0 && m.role !== 'user') return;
+            const last = contents[contents.length - 1];
+            if (last && last.role === m.role) {
+              last.parts[0].text += '\n\n' + m.text;
+            } else {
+              contents.push({ role: m.role, parts: [{ text: m.text }] });
+            }
+          });
+          return contents;
+        };
+
         const sendAiMessage = async () => {
           if (!aiInput.value.trim() || isAiThinking.value) return;
 
           const keyToUse = getApiKey();
           if (!keyToUse) {
-            showApiKeyModal.value = true;
+            openApiKeyModal();
             return;
           }
 
           const userText = aiInput.value.trim();
           aiMessages.value.push({ role: 'user', text: userText });
+          const pushError = (text) => aiMessages.value.push({ role: 'model', text, isError: true });
           aiInput.value = '';
           isAiThinking.value = true;
 
@@ -2375,32 +2553,28 @@ ${JSON.stringify(recipeSummary, null, 2)}
 
           try {
             const payload = {
-              contents: aiMessages.value.map(m => ({
-                role: m.role,
-                parts: [{ text: m.text }]
-              })),
+              contents: buildChatContents(aiMessages.value),
               systemInstruction: { parts: [{ text: systemPrompt }] }
             };
 
-            const response = await fetch(getApiUrl(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            const response = await callGemini(payload);
 
             if (!response.ok) {
-              aiMessages.value.push({ role: 'model', text: `⚠️ エラーが発生しました。\n${await describeApiError(response)}` });
+              pushError(`⚠️ エラーが発生しました。\n${await describeApiError(response)}`);
               return;
             }
 
             const result = await response.json();
-            const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || '申し訳ありません。上手く回答を作成できませんでした。';
-
-            aiMessages.value.push({ role: 'model', text: reply });
+            const { text: reply, reason } = extractResponseText(result);
+            if (reply) {
+              aiMessages.value.push({ role: 'model', text: reply });
+            } else {
+              pushError(`⚠️ ${reason}\n質問の言い方を変えて、もう一度お試しください。`);
+            }
 
           } catch (err) {
             console.error('AI chat error:', err);
-            aiMessages.value.push({ role: 'model', text: '通信エラーが発生しました。APIキーまたは通信状況をご確認ください。' });
+            pushError('⚠️ 通信エラーが発生しました。インターネット接続をご確認ください。');
           } finally {
             isAiThinking.value = false;
           }
@@ -2511,7 +2685,11 @@ ${JSON.stringify(recipeSummary, null, 2)}
           availableModels,
           isFetchingModels,
           modelListMessage,
-          fetchAvailableModels
+          fetchAvailableModels,
+          hasSavedApiKey,
+          openApiKeyModal,
+          closeApiKeyModal,
+          deleteApiKey
         };
       }
     }).mount('#app');
