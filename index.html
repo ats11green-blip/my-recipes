@@ -874,12 +874,12 @@
               </div>
 
               <!-- Selected Recipe Card for this day -->
-              <div v-if="mealPlan[dIdx]" class="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1 shadow-sm text-xs relative group">
+              <div v-if="mealPlanRecipes[dIdx]" class="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1 shadow-sm text-xs relative group">
                 <div class="font-bold text-emerald-900 leading-tight line-clamp-2">
-                  {{ mealPlan[dIdx].title }}
+                  {{ mealPlanRecipes[dIdx].title }}
                 </div>
                 <div class="text-[10px] text-slate-400 flex items-center justify-between">
-                  <span>{{ mealPlan[dIdx].servings || '1食分' }}</span>
+                  <span>{{ mealPlanRecipes[dIdx].servings || '1食分' }}</span>
                   <button @click="removeFromMealPlan(dIdx)" class="text-slate-300 hover:text-red-500 p-0.5">
                     <i class="fa-solid fa-xmark"></i>
                   </button>
@@ -914,11 +914,11 @@
 
             <div v-if="shoppingList.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
               <label 
-                v-for="(item, idx) in shoppingList" 
-                :key="idx" 
+                v-for="item in shoppingList" 
+                :key="item.name" 
                 :class="item.checked ? 'bg-slate-100 text-slate-400 line-through' : 'bg-white text-slate-800 shadow-sm border-slate-200'"
                 class="p-2.5 rounded-xl border flex items-center space-x-2 cursor-pointer transition">
-                <input type="checkbox" v-model="item.checked" class="rounded text-emerald-600 focus:ring-emerald-500">
+                <input type="checkbox" :checked="item.checked" @change="toggleShoppingItem(item.name)" class="rounded text-emerald-600 focus:ring-emerald-500">
                 <span class="font-bold flex-1 truncate">{{ item.name }}</span>
                 <span class="text-[11px] text-slate-400 shrink-0">{{ item.amounts.join(' + ') }}</span>
               </label>
@@ -1475,7 +1475,12 @@
 
         // Weekly Planner
         const daysOfWeek = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
+        // Each day holds a recipe ID (string) or null. Store IDs, not copies,
+        // so edits/deletes of a recipe are reflected in the plan and shopping list.
+        const PLANNER_STORAGE_KEY = 'my_recipe_meal_plan';
         const mealPlan = ref([null, null, null, null, null, null, null]);
+        // Names of shopping list items the user has checked off
+        const checkedShoppingItems = ref([]);
         const selectingPlanDayIdx = ref(null);
 
         // AI Chat Assistant
@@ -1593,6 +1598,8 @@
               storageLocked.value = true;
             }
           }
+
+          loadPlannerFromStorage();
         });
 
         const saveApiKey = () => {
@@ -1800,8 +1807,8 @@
 
           corruptRawData = null;
           pendingImport.value = null;
-          // Meal plan may hold recipes that no longer exist
-          if (mode === 'replace') clearMealPlanner();
+          // Days whose recipe no longer exists become empty; the rest are kept
+          pruneMealPlan();
           showToast(mode === 'replace'
             ? `${added}件のレシピで置き換えました`
             : `${added}件のレシピを追加しました${skipped ? `（同じIDの${skipped}件はスキップ）` : ''}`);
@@ -2046,6 +2053,9 @@
               return;
             }
 
+            // Remove the deleted recipe from the meal plan too
+            pruneMealPlan();
+
             if (detailRecipe.value && String(detailRecipe.value.id) === targetId) {
               detailRecipe.value = null;
             }
@@ -2204,49 +2214,23 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
         };
 
         // Weekly Meal Planner Logic
-        const addToMealPlanner = (recipe) => {
-          const emptyIdx = mealPlan.value.findIndex(p => p === null);
-          if (emptyIdx !== -1) {
-            mealPlan.value[emptyIdx] = recipe;
-            showToast(`「${daysOfWeek[emptyIdx]}」の献立に追加しました！`);
-            activeTab.value = 'planner';
-          } else {
-            mealPlan.value[0] = recipe;
-            showToast(`月曜日の献立を更新しました！`);
-            activeTab.value = 'planner';
-          }
-        };
-
-        const openSelectRecipeForPlanModal = (dIdx) => {
-          selectingPlanDayIdx.value = dIdx;
-        };
-
-        const selectRecipeForMealPlan = (recipe) => {
-          if (selectingPlanDayIdx.value !== null) {
-            mealPlan.value[selectingPlanDayIdx.value] = recipe;
-            selectingPlanDayIdx.value = null;
-            showToast('献立に登録しました');
-          }
-        };
-
-        const removeFromMealPlan = (dIdx) => {
-          mealPlan.value[dIdx] = null;
-        };
-
-        const clearMealPlanner = () => {
-          mealPlan.value = [null, null, null, null, null, null, null];
-        };
+        // Resolve the stored IDs to the current recipe objects (null if empty or deleted)
+        const mealPlanRecipes = computed(() => {
+          const byId = new Map(recipes.value.map(r => [String(r.id), r]));
+          return mealPlan.value.map(id => (id ? byId.get(String(id)) || null : null));
+        });
 
         // Auto Aggregated Shopping List
         const shoppingList = computed(() => {
           const map = new Map();
-          mealPlan.value.forEach(recipe => {
-            if (recipe && recipe.ingredients) {
+          const checked = new Set(checkedShoppingItems.value);
+          mealPlanRecipes.value.forEach(recipe => {
+            if (recipe && Array.isArray(recipe.ingredients)) {
               recipe.ingredients.forEach(ing => {
-                if (ing.name) {
+                if (ing && ing.name && ing.name.trim()) {
                   const key = ing.name.trim();
                   if (!map.has(key)) {
-                    map.set(key, { name: key, amounts: [ing.amount || '適量'], checked: false });
+                    map.set(key, { name: key, amounts: [ing.amount || '適量'], checked: checked.has(key) });
                   } else {
                     map.get(key).amounts.push(ing.amount || '適量');
                   }
@@ -2256,6 +2240,94 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
           });
           return Array.from(map.values());
         });
+
+        const savePlannerToStorage = () => {
+          // Forget checks for items that are no longer on the list
+          const names = new Set(shoppingList.value.map(i => i.name));
+          checkedShoppingItems.value = checkedShoppingItems.value.filter(n => names.has(n));
+          try {
+            localStorage.setItem(PLANNER_STORAGE_KEY, JSON.stringify({
+              days: mealPlan.value,
+              checked: checkedShoppingItems.value
+            }));
+          } catch (e) {
+            console.error('Failed to save meal plan:', e);
+            storageErrorMessage.value = isQuotaError(e)
+              ? 'ブラウザの保存容量がいっぱいのため、献立・買い物リストのチェックを保存できませんでした。\n写真を外す・不要なレシピを削除するなどして容量を空けてください。'
+              : `献立の保存に失敗しました。\n(${e && e.message ? e.message : e})`;
+          }
+        };
+
+        const loadPlannerFromStorage = () => {
+          try {
+            const raw = localStorage.getItem(PLANNER_STORAGE_KEY);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (data && Array.isArray(data.days)) {
+              mealPlan.value = daysOfWeek.map((_, i) => {
+                const v = data.days[i];
+                return (typeof v === 'string' && v) ? v : null;
+              });
+            }
+            if (data && Array.isArray(data.checked)) {
+              checkedShoppingItems.value = data.checked.filter(n => typeof n === 'string');
+            }
+          } catch (e) {
+            // A broken plan is not worth blocking the app: start with an empty plan
+            console.error('Failed to load meal plan:', e);
+          }
+        };
+
+        // Empty the days whose recipe no longer exists
+        const pruneMealPlan = () => {
+          const ids = new Set(recipes.value.map(r => String(r.id)));
+          mealPlan.value = mealPlan.value.map(id => (id && ids.has(String(id)) ? id : null));
+          savePlannerToStorage();
+        };
+
+        const addToMealPlanner = (recipe) => {
+          if (!recipe || !recipe.id) return;
+          const emptyIdx = mealPlanRecipes.value.findIndex(r => r === null);
+          if (emptyIdx !== -1) {
+            mealPlan.value[emptyIdx] = String(recipe.id);
+            showToast(`「${daysOfWeek[emptyIdx]}」の献立に追加しました！`);
+          } else {
+            mealPlan.value[0] = String(recipe.id);
+            showToast(`月曜日の献立を更新しました！`);
+          }
+          savePlannerToStorage();
+          activeTab.value = 'planner';
+        };
+
+        const openSelectRecipeForPlanModal = (dIdx) => {
+          selectingPlanDayIdx.value = dIdx;
+        };
+
+        const selectRecipeForMealPlan = (recipe) => {
+          if (selectingPlanDayIdx.value !== null && recipe && recipe.id) {
+            mealPlan.value[selectingPlanDayIdx.value] = String(recipe.id);
+            selectingPlanDayIdx.value = null;
+            savePlannerToStorage();
+            showToast('献立に登録しました');
+          }
+        };
+
+        const removeFromMealPlan = (dIdx) => {
+          mealPlan.value[dIdx] = null;
+          savePlannerToStorage();
+        };
+
+        const clearMealPlanner = () => {
+          mealPlan.value = [null, null, null, null, null, null, null];
+          checkedShoppingItems.value = [];
+          savePlannerToStorage();
+        };
+
+        const toggleShoppingItem = (name) => {
+          const list = checkedShoppingItems.value;
+          checkedShoppingItems.value = list.includes(name) ? list.filter(n => n !== name) : [...list, name];
+          savePlannerToStorage();
+        };
 
         const copyShoppingListToClipboard = () => {
           if (shoppingList.value.length === 0) return;
@@ -2410,6 +2482,8 @@ ${JSON.stringify(recipeSummary, null, 2)}
           formatTimer,
           daysOfWeek,
           mealPlan,
+          mealPlanRecipes,
+          toggleShoppingItem,
           selectingPlanDayIdx,
           addToMealPlanner,
           openSelectRecipeForPlanModal,
