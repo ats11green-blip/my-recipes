@@ -787,6 +787,8 @@
               <input 
                 v-model="recipeForm.url" 
                 type="url" 
+                pattern="https?://.+" 
+                title="http:// または https:// で始まるURLを入力してください" 
                 placeholder="https://..." 
                 class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
             </div>
@@ -945,9 +947,20 @@
                 <p class="text-[11px] text-slate-500">あなたが保存した手持ちレシピ（現在{{ recipes.length }}件）を把握してアドバイスします</p>
               </div>
             </div>
-            <button @click="clearAiChat" class="text-xs text-slate-400 hover:text-slate-600">
+            <button @click="clearAiChat" class="text-xs text-slate-400 hover:text-slate-600 shrink-0">
               <i class="fa-solid fa-arrows-rotate mr-1"></i> 履歴クリア
             </button>
+          </div>
+          <!-- What is sent to the AI -->
+          <div class="px-4 py-2 bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <i class="fa-solid fa-circle-info mr-1"></i>
+              AIに送る内容: レシピ名・カテゴリ・調理時間・材料名（質問にレシピ名が含まれる場合は、そのレシピの分量・手順も）
+            </span>
+            <label class="flex items-center gap-1.5 cursor-pointer font-bold text-slate-600 shrink-0">
+              <input type="checkbox" v-model="aiShareNotes" @change="saveAiShareNotes" class="rounded text-emerald-600 focus:ring-emerald-500">
+              マイメモも送る
+            </label>
           </div>
 
           <!-- Chat Messages Area -->
@@ -1116,8 +1129,8 @@
         <!-- Footer Actions -->
         <div class="p-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs">
           <a 
-            v-if="detailRecipe.url" 
-            :href="detailRecipe.url" 
+            v-if="safeLinkUrl(detailRecipe.url)" 
+            :href="safeLinkUrl(detailRecipe.url)" 
             target="_blank" 
             rel="noopener noreferrer"
             class="text-emerald-700 hover:underline font-bold flex items-center gap-1">
@@ -1786,6 +1799,10 @@
         // ---- Import (restore from JSON backup) ----
         const toStr = (v) => (typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''));
         const isSafeLinkUrl = (u) => /^https?:\/\//i.test(u);
+        const safeLinkUrl = (u) => {
+          const s = typeof u === 'string' ? u.trim() : '';
+          return isSafeLinkUrl(s) ? s : '';
+        };
         const isSafeImageUrl = (u) => /^data:image\/[a-z0-9.+-]+;base64,/i.test(u) || /^https?:\/\//i.test(u);
 
         // Build a clean recipe from untrusted data; returns null if unusable
@@ -2008,6 +2025,14 @@
         // Save Logic
         const saveNewRecipe = () => {
           if (!recipeForm.value.title.trim()) return;
+
+          // Only http(s) links are allowed (blocks "javascript:" etc. that could run code when clicked)
+          const rawUrl = (recipeForm.value.url || '').trim();
+          if (rawUrl && !isSafeLinkUrl(rawUrl)) {
+            storageErrorMessage.value = '元URLは「http://」または「https://」で始まるものだけ登録できます。\nURL欄を修正してから、もう一度保存してください。';
+            return;
+          }
+          recipeForm.value.url = rawUrl;
 
           const tags = recipeForm.value.tagsStr 
             ? recipeForm.value.tagsStr.split(/[,、]/).map(s => s.trim()).filter(Boolean)
@@ -2520,6 +2545,79 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
           return contents;
         };
 
+        // ---- What recipe data goes to the AI ----
+        // Keep requests small (cost/speed) and avoid sending personal notes unless the user opts in.
+        const CHAT_HISTORY_LIMIT = 20;          // messages of history sent per request
+        const CHAT_CONTEXT_CHAR_LIMIT = 30000;  // max characters of the recipe list
+        const AI_SHARE_NOTES_KEY = 'my_recipe_ai_share_notes';
+        const aiShareNotes = ref(readStorage(AI_SHARE_NOTES_KEY) === '1');
+        const saveAiShareNotes = () => {
+          try { localStorage.setItem(AI_SHARE_NOTES_KEY, aiShareNotes.value ? '1' : '0'); } catch (e) { /* not critical */ }
+        };
+
+        // Recipes whose title appears in the question (ignoring spaces) get full details
+        const findMentionedRecipes = (questionText) => {
+          const norm = (t) => String(t || '').replace(/[\s　]/g, '').toLowerCase();
+          const q = norm(questionText);
+          return recipes.value.filter(r => {
+            const t = norm(r.title);
+            return t.length >= 2 && q.includes(t);
+          }).slice(0, 3);
+        };
+
+        const buildChatSystemPrompt = (questionText) => {
+          const withNotes = aiShareNotes.value;
+          const summarize = (r) => {
+            const o = {
+              title: r.title,
+              category: r.category || undefined,
+              cookingTime: r.cookingTime || undefined,
+              ingredients: Array.isArray(r.ingredients) ? r.ingredients.map(i => i && i.name).filter(Boolean) : []
+            };
+            if (withNotes) {
+              const n = getNotesArray(r.notes);
+              if (n.length) o.notes = n;
+            }
+            return o;
+          };
+
+          // Compact one-line-per-recipe list, cut off when it gets too long
+          const lines = [];
+          let total = 0;
+          for (const r of recipes.value) {
+            const line = JSON.stringify(summarize(r));
+            if (total + line.length > CHAT_CONTEXT_CHAR_LIMIT) break;
+            lines.push(line);
+            total += line.length + 1;
+          }
+          const omitted = recipes.value.length - lines.length;
+
+          const mentioned = findMentionedRecipes(questionText).map(r => {
+            const o = {
+              title: r.title,
+              servings: r.servings || undefined,
+              ingredients: Array.isArray(r.ingredients) ? r.ingredients.map(i => ({ name: i.name, amount: i.amount })) : [],
+              steps: Array.isArray(r.steps) ? r.steps : []
+            };
+            if (withNotes) {
+              const n = getNotesArray(r.notes);
+              if (n.length) o.notes = n;
+            }
+            return o;
+          });
+
+          return `
+あなたはユーザーのマイレシピ専用シェフAIです。
+ユーザーが手持ちのレシピ帳に登録している以下のレシピデータ（全${recipes.value.length}件）を踏まえてアドバイスしてください。
+一覧には材料名だけを載せています。分量や手順が必要な質問で詳細が無い場合は、レシピ名を挙げて質問するよう案内してください。
+
+【ユーザーのマイレシピ一覧（1行1レシピ）】
+${lines.join('\n') || '（登録なし）'}
+${omitted > 0 ? `\n※ 長くなるため、残り${omitted}件は省略しています。` : ''}
+${mentioned.length ? `\n【質問に出てきたレシピの詳細】\n${JSON.stringify(mentioned, null, 1)}` : ''}
+`;
+        };
+
         const sendAiMessage = async () => {
           if (!aiInput.value.trim() || isAiThinking.value) return;
 
@@ -2535,25 +2633,13 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
           aiInput.value = '';
           isAiThinking.value = true;
 
-          const recipeSummary = recipes.value.map(r => ({
-            title: r.title,
-            category: r.category,
-            cookingTime: r.cookingTime,
-            ingredients: r.ingredients ? r.ingredients.map(i => i.name) : [],
-            notes: r.notes
-          }));
-
-          const systemPrompt = `
-あなたはユーザーのマイレシピ専用シェフAIです。
-ユーザーが手持ちのレシピ帳に登録している以下のレシピデータ（全${recipes.value.length}件）を踏まえてアドバイスしてください。
-
-【ユーザーのマイレシピ一覧】
-${JSON.stringify(recipeSummary, null, 2)}
-`;
+          // Look at recent questions too, so follow-ups like "それを4人分に" keep the details
+          const recentQuestions = aiMessages.value.filter(m => m.role === 'user').slice(-3).map(m => m.text).join('\n');
+          const systemPrompt = buildChatSystemPrompt(recentQuestions);
 
           try {
             const payload = {
-              contents: buildChatContents(aiMessages.value),
+              contents: buildChatContents(aiMessages.value.slice(-CHAT_HISTORY_LIMIT)),
               systemInstruction: { parts: [{ text: systemPrompt }] }
             };
 
@@ -2689,7 +2775,10 @@ ${JSON.stringify(recipeSummary, null, 2)}
           hasSavedApiKey,
           openApiKeyModal,
           closeApiKeyModal,
-          deleteApiKey
+          deleteApiKey,
+          safeLinkUrl,
+          aiShareNotes,
+          saveAiShareNotes
         };
       }
     }).mount('#app');
