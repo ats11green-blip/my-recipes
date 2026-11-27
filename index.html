@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MyRecipeVault - マイレシピ管理＆献立ノート</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 外部ライブラリはバージョンを固定しています（勝手に新しい版に変わって壊れるのを防ぐため）。
+       更新するときは動作確認してから番号を書き換えてください。 -->
+  <!-- Tailwind CSS (Play CDN v3, pinned) -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <!-- Vue 3 CDN -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Vue 3 (production build, pinned) -->
+  <script src="https://unpkg.com/vue@3.5.45/dist/vue.global.prod.js"></script>
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
   
@@ -1238,6 +1240,33 @@
           <p class="text-[10px] text-slate-400 mt-1">※APIキーはお使いのスマホ（ブラウザ）にのみ安全に保存されます。</p>
         </div>
 
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">使用するAIモデル</label>
+          <div class="flex gap-2">
+            <input
+              v-model="userModel"
+              list="gemini-model-options"
+              type="text"
+              :placeholder="DEFAULT_GEMINI_MODEL"
+              class="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500">
+            <button
+              type="button"
+              @click="fetchAvailableModels"
+              :disabled="isFetchingModels"
+              class="shrink-0 px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl transition">
+              <i :class="isFetchingModels ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-list'" class="mr-1"></i>一覧を取得
+            </button>
+          </div>
+          <datalist id="gemini-model-options">
+            <option v-for="m in availableModels" :key="m" :value="m"></option>
+          </datalist>
+          <p class="text-[10px] text-slate-400 mt-1">
+            空欄なら「{{ DEFAULT_GEMINI_MODEL }}」（常に最新のFlashモデルを指す名前）を使います。
+            AI機能が「モデルが見つからない」エラーで動かなくなったら、「一覧を取得」から別のモデルを選んでください。
+          </p>
+          <p v-if="modelListMessage" class="text-[10px] mt-1" :class="availableModels.length ? 'text-emerald-700' : 'text-red-600'">{{ modelListMessage }}</p>
+        </div>
+
         <div class="flex justify-end gap-2 pt-2">
           <button 
             @click="showApiKeyModal = false" 
@@ -1459,20 +1488,80 @@
         const aiInput = ref('');
         const isAiThinking = ref(false);
 
-        // Gemini API Setup (Matches initial version: gemini-3-flash-preview)
+        // Gemini API Setup
+        // "gemini-flash-latest" is Google's alias that always points to the newest Flash model,
+        // so it does not stop working when a specific (preview) model is retired.
+        const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+        const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+        const MODEL_STORAGE_KEY = 'my_recipe_gemini_model';
+        const userModel = ref('');
+        const availableModels = ref([]);
+        const isFetchingModels = ref(false);
+        const modelListMessage = ref('');
+
+        // Accept "models/xxx" too; only allow characters valid in a model ID
+        const normalizeModelName = (name) => {
+          const n = String(name || '').trim().replace(/^models\//, '');
+          return /^[A-Za-z0-9._-]+$/.test(n) ? n : '';
+        };
+
+        const getModelName = () => normalizeModelName(userModel.value) || DEFAULT_GEMINI_MODEL;
+
         const getApiKey = () => {
           return (userApiKey.value && userApiKey.value.trim()) || localStorage.getItem('my_recipe_gemini_api_key') || "";
         };
 
         const getApiUrl = () => {
           const key = getApiKey();
-          return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`;
+          return `${GEMINI_API_BASE}/models/${getModelName()}:generateContent?key=${encodeURIComponent(key)}`;
+        };
+
+        // Turn an error response into a readable message, with a hint when the model is the problem
+        const describeApiError = async (response) => {
+          const errData = await response.json().catch(() => ({}));
+          const base = errData.error?.message || `HTTP エラー ${response.status}: ${response.statusText}`;
+          const looksLikeModelProblem = response.status === 404 || /model/i.test(base) && /(not found|not supported|deprecated|no longer)/i.test(base);
+          return looksLikeModelProblem
+            ? `${base}\n\n▶ 使用中のAIモデル「${getModelName()}」が使えなくなっている可能性があります。ヘッダーの「APIキー設定」→「一覧を取得」から別のモデルを選んで保存してください。`
+            : base;
+        };
+
+        const fetchAvailableModels = async () => {
+          const key = getApiKey();
+          if (!key) {
+            modelListMessage.value = '先にAPIキーを入力してください。';
+            return;
+          }
+          isFetchingModels.value = true;
+          modelListMessage.value = '';
+          try {
+            const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1000&key=${encodeURIComponent(key)}`);
+            if (!res.ok) throw new Error(await describeApiError(res));
+            const data = await res.json();
+            const names = (data.models || [])
+              .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+              .map(m => normalizeModelName(m.name))
+              .filter(n => n && n.startsWith('gemini'));
+            availableModels.value = Array.from(new Set(names)).sort();
+            modelListMessage.value = availableModels.value.length
+              ? `${availableModels.value.length}件のモデルが使えます。入力欄をタップして選べます。`
+              : '使えるモデルが見つかりませんでした。';
+          } catch (err) {
+            availableModels.value = [];
+            modelListMessage.value = `モデル一覧を取得できませんでした: ${err.message || err}`;
+          } finally {
+            isFetchingModels.value = false;
+          }
         };
 
         // LocalStorage Load & Auto-Sanitize IDs
         onMounted(() => {
           const savedKey = localStorage.getItem('my_recipe_gemini_api_key');
           if (savedKey) userApiKey.value = savedKey;
+          try {
+            const savedModel = localStorage.getItem(MODEL_STORAGE_KEY);
+            if (savedModel) userModel.value = savedModel;
+          } catch (e) { /* storage unavailable: use default model */ }
 
           let saved = null;
           try {
@@ -1507,9 +1596,23 @@
         });
 
         const saveApiKey = () => {
-          localStorage.setItem('my_recipe_gemini_api_key', userApiKey.value.trim());
+          const rawModel = userModel.value.trim();
+          const model = normalizeModelName(rawModel);
+          if (rawModel && !model) {
+            modelListMessage.value = 'モデル名に使えない文字が含まれています（英数字・「.」「-」「_」のみ）。';
+            return;
+          }
+          try {
+            localStorage.setItem('my_recipe_gemini_api_key', userApiKey.value.trim());
+            if (model) localStorage.setItem(MODEL_STORAGE_KEY, model);
+            else localStorage.removeItem(MODEL_STORAGE_KEY);
+          } catch (e) {
+            storageErrorMessage.value = `設定を保存できませんでした。\n(${e && e.message ? e.message : e})`;
+            return;
+          }
+          userModel.value = model;
           showApiKeyModal.value = false;
-          showToast('APIキーを保存しました！AI機能が使用可能です。');
+          showToast(`設定を保存しました！（AIモデル: ${getModelName()}）`);
         };
 
         const isQuotaError = (e) => {
@@ -2021,8 +2124,7 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
             });
 
             if (!response.ok) {
-              const errData = await response.json().catch(() => ({}));
-              throw new Error(errData.error?.message || `HTTP エラー ${response.status}: ${response.statusText}`);
+              throw new Error(await describeApiError(response));
             }
 
             const result = await response.json();
@@ -2214,6 +2316,11 @@ ${JSON.stringify(recipeSummary, null, 2)}
               body: JSON.stringify(payload)
             });
 
+            if (!response.ok) {
+              aiMessages.value.push({ role: 'model', text: `⚠️ エラーが発生しました。\n${await describeApiError(response)}` });
+              return;
+            }
+
             const result = await response.json();
             const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || '申し訳ありません。上手く回答を作成できませんでした。';
 
@@ -2324,7 +2431,13 @@ ${JSON.stringify(recipeSummary, null, 2)}
           discardCorruptData,
           pendingImport,
           handleImportFileSelect,
-          confirmImport
+          confirmImport,
+          DEFAULT_GEMINI_MODEL,
+          userModel,
+          availableModels,
+          isFetchingModels,
+          modelListMessage,
+          fetchAvailableModels
         };
       }
     }).mount('#app');
