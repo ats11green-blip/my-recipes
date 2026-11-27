@@ -62,6 +62,72 @@
       </div>
     </div>
 
+    <!-- Storage Save Error Modal -->
+    <div v-if="storageErrorMessage" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-red-200">
+        <div class="flex items-center space-x-3 text-red-600">
+          <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+          <h3 class="font-bold text-base text-slate-800">保存できませんでした</h3>
+        </div>
+        <p class="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{{ storageErrorMessage }}</p>
+        <div class="flex justify-end gap-2 text-xs">
+          <button @click="exportRecipesJson" class="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl border border-emerald-200 transition">
+            <i class="fa-solid fa-file-export mr-1"></i>今のデータを書き出す
+          </button>
+          <button @click="storageErrorMessage = ''" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Confirm Modal -->
+    <div v-if="pendingImport" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-file-import text-emerald-600"></i>
+            <span>バックアップの読み込み</span>
+          </h3>
+          <button @click="pendingImport = null" class="text-slate-400 hover:text-slate-600 text-base">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="space-y-2 text-slate-700 leading-relaxed">
+          <p>
+            「<strong>{{ pendingImport.fileName }}</strong>」から
+            <strong class="text-emerald-700 text-sm">{{ pendingImport.recipes.length }}</strong> 件のレシピを読み込めます。
+          </p>
+          <p v-if="pendingImport.invalidCount > 0" class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            ※ タイトルが無いなど、形式が正しくない {{ pendingImport.invalidCount }} 件は読み込みません。
+          </p>
+          <p class="text-slate-500">
+            現在のレシピ: {{ recipes.length }} 件<br>
+            「追加」は同じIDのレシピを飛ばして追加します。「置き換え」は現在のレシピをすべて消してから読み込みます。
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-2 pt-2">
+          <button
+            @click="confirmImport('merge')"
+            class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition shadow">
+            今のレシピに追加する
+          </button>
+          <button
+            @click="confirmImport('replace')"
+            class="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-xl border border-red-200 transition">
+            今のレシピをすべて置き換える
+          </button>
+          <button
+            @click="pendingImport = null"
+            class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Header -->
     <header class="bg-emerald-700 text-white shadow-md sticky top-0 z-40">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -130,12 +196,48 @@
             class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs p-2 rounded-lg transition">
             <i class="fa-solid fa-file-export"></i>
           </button>
+
+          <button
+            @click="$refs.importInput.click()"
+            title="バックアップ（JSON）からレシピを読み込む"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs p-2 rounded-lg transition">
+            <i class="fa-solid fa-file-import"></i>
+          </button>
+          <input
+            ref="importInput"
+            type="file"
+            accept="application/json,.json"
+            class="hidden"
+            @change="handleImportFileSelect">
         </div>
       </div>
     </header>
 
     <!-- Main Content Container -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <!-- Corrupted Storage Warning -->
+      <div v-if="storageLocked" class="mb-6 bg-red-50 border border-red-300 rounded-2xl p-5 space-y-3 text-xs text-red-900">
+        <div class="flex items-center gap-2 font-bold text-sm">
+          <i class="fa-solid fa-triangle-exclamation text-red-600"></i>
+          <span>保存されているレシピデータを読み込めませんでした</span>
+        </div>
+        <p class="leading-relaxed">
+          元のデータを守るため、<strong>保存を一時停止</strong>しています（この状態で追加・修正しても保存されません）。
+          まず「元データをダウンロード」で控えを取ってから、バックアップ（JSON）を読み込むか、データを破棄して新しく始めてください。
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <button @click="downloadCorruptData" class="px-3 py-2 bg-white hover:bg-red-100 text-red-800 font-bold rounded-xl border border-red-300 transition">
+            <i class="fa-solid fa-download mr-1"></i>元データをダウンロード
+          </button>
+          <button @click="$refs.importInput.click()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition">
+            <i class="fa-solid fa-file-import mr-1"></i>バックアップを読み込む
+          </button>
+          <button @click="discardCorruptData" class="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition">
+            <i class="fa-solid fa-trash-can mr-1"></i>破棄して新しく始める
+          </button>
+        </div>
+      </div>
 
       <!-- ================= TAB 1: マイレシピ一覧 & 高機能検索 ================= -->
       <section v-if="activeTab === 'recipes'" class="space-y-6">
@@ -1222,6 +1324,16 @@
         // Delete Modal State
         const recipeToDelete = ref(null);
 
+        // Storage Safety State
+        const STORAGE_KEY = 'my_personal_recipe_vault';
+        const storageErrorMessage = ref('');
+        // true while saved data could not be read: saving is blocked so the original is not overwritten
+        const storageLocked = ref(false);
+        let corruptRawData = null;
+
+        // Import State
+        const pendingImport = ref(null);
+
         // Recipe Form State
         const recipeForm = ref({
           id: null,
@@ -1362,19 +1474,34 @@
           const savedKey = localStorage.getItem('my_recipe_gemini_api_key');
           if (savedKey) userApiKey.value = savedKey;
 
-          const saved = localStorage.getItem('my_personal_recipe_vault');
+          let saved = null;
+          try {
+            saved = localStorage.getItem(STORAGE_KEY);
+          } catch (e) {
+            console.error('Failed to access localStorage:', e);
+            storageErrorMessage.value = 'ブラウザの保存領域にアクセスできません（プライベートモードや設定で無効になっている可能性があります）。\nこの状態では、追加・修正したレシピは保存されません。';
+            return;
+          }
+
           if (saved) {
+            let parsed;
             try {
-              const parsed = JSON.parse(saved);
-              if (Array.isArray(parsed)) {
-                recipes.value = parsed.map(r => ({
-                  ...r,
-                  id: (r && r.id) ? String(r.id) : generateUniqueId()
-                }));
-                saveRecipesToStorage();
-              }
+              parsed = JSON.parse(saved);
             } catch (e) {
-              console.error('Failed to load recipes:', e);
+              console.error('Failed to parse saved recipes:', e);
+              parsed = undefined;
+            }
+
+            if (Array.isArray(parsed)) {
+              recipes.value = parsed.map(r => ({
+                ...r,
+                id: (r && r.id) ? String(r.id) : generateUniqueId()
+              }));
+              saveRecipesToStorage();
+            } else {
+              // Keep the original untouched: block saving until the user decides what to do
+              corruptRawData = saved;
+              storageLocked.value = true;
             }
           }
         });
@@ -1385,8 +1512,197 @@
           showToast('APIキーを保存しました！AI機能が使用可能です。');
         };
 
+        const isQuotaError = (e) => {
+          return e && (
+            e.name === 'QuotaExceededError' ||
+            e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+            e.code === 22 ||
+            e.code === 1014
+          );
+        };
+
+        // Returns true only when the data was actually written. Callers must check it.
         const saveRecipesToStorage = () => {
-          localStorage.setItem('my_personal_recipe_vault', JSON.stringify(recipes.value));
+          if (storageLocked.value) {
+            storageErrorMessage.value = '保存済みデータを読み込めなかったため、元データを守るために保存を停止しています。\n画面上部の案内から、元データの控えを取ったうえでバックアップを読み込むか、破棄してください。';
+            return false;
+          }
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes.value));
+            return true;
+          } catch (e) {
+            console.error('Failed to save recipes:', e);
+            storageErrorMessage.value = isQuotaError(e)
+              ? 'ブラウザの保存容量（約5MB）がいっぱいです。今回の変更は保存されていません。\n写真付きのレシピが多いと容量を圧迫します。写真を外す・不要なレシピを削除するなどして容量を空けてください。\n念のため「今のデータを書き出す」でバックアップを取っておくことをおすすめします。'
+              : `データの保存に失敗しました。今回の変更は保存されていません。\n(${e && e.message ? e.message : e})`;
+            return false;
+          }
+        };
+
+        // Run a mutation on recipes and persist it; roll back if persisting fails
+        const commitRecipesChange = (mutate) => {
+          const snapshot = recipes.value.slice();
+          mutate();
+          if (saveRecipesToStorage()) return true;
+          recipes.value = snapshot;
+          return false;
+        };
+
+        const downloadTextFile = (text, fileName, mime) => {
+          const blob = new Blob([text], { type: mime });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+
+        const downloadCorruptData = () => {
+          if (corruptRawData === null) return;
+          downloadTextFile(corruptRawData, `my_recipe_vault_corrupt_${new Date().toISOString().slice(0,10)}.txt`, 'text/plain;charset=utf-8');
+          showToast('元データをダウンロードしました');
+        };
+
+        const discardCorruptData = () => {
+          if (!confirm('読み込めなかった元データを破棄して、空の状態から始めます。\n元に戻せません。先に「元データをダウンロード」で控えを取りましたか？')) return;
+          storageLocked.value = false;
+          if (saveRecipesToStorage()) {
+            corruptRawData = null;
+            showToast('元データを破棄しました。新しく保存できます。');
+          } else {
+            storageLocked.value = true;
+          }
+        };
+
+        // ---- Import (restore from JSON backup) ----
+        const toStr = (v) => (typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''));
+        const isSafeLinkUrl = (u) => /^https?:\/\//i.test(u);
+        const isSafeImageUrl = (u) => /^data:image\/[a-z0-9.+-]+;base64,/i.test(u) || /^https?:\/\//i.test(u);
+
+        // Build a clean recipe from untrusted data; returns null if unusable
+        const sanitizeImportedRecipe = (r) => {
+          if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+          const title = toStr(r.title).trim();
+          if (!title) return null;
+
+          const ingredients = Array.isArray(r.ingredients)
+            ? r.ingredients.map(i => {
+                if (typeof i === 'string') return { name: i.trim(), amount: '' };
+                if (i && typeof i === 'object') return { name: toStr(i.name).trim(), amount: toStr(i.amount).trim() };
+                return null;
+              }).filter(i => i && i.name)
+            : [];
+          const steps = Array.isArray(r.steps) ? r.steps.map(s => toStr(s).trim()).filter(Boolean) : [];
+          const tags = Array.isArray(r.tags) ? r.tags.map(t => toStr(t).trim()).filter(Boolean) : [];
+          const rating = Math.round(Number(r.rating));
+          const url = toStr(r.url).trim();
+          const imageUrl = toStr(r.imageUrl).trim();
+
+          const recipe = {
+            id: toStr(r.id).trim(),
+            title,
+            category: toStr(r.category).trim(),
+            cookingTime: toStr(r.cookingTime).trim(),
+            servings: toStr(r.servings).trim(),
+            rating: rating >= 1 && rating <= 5 ? rating : 0,
+            source: toStr(r.source).trim(),
+            url: isSafeLinkUrl(url) ? url : '',
+            imageUrl: isSafeImageUrl(imageUrl) ? imageUrl : '',
+            ingredients,
+            steps,
+            tags,
+            notes: getNotesArray(r.notes),
+            createdAt: toStr(r.createdAt) || new Date().toISOString()
+          };
+          if (toStr(r.updatedAt)) recipe.updatedAt = toStr(r.updatedAt);
+          return recipe;
+        };
+
+        const handleImportFileSelect = (e) => {
+          const file = e.target.files && e.target.files[0];
+          e.target.value = '';
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onerror = () => {
+            storageErrorMessage.value = 'ファイルを読み込めませんでした。';
+          };
+          reader.onload = () => {
+            let data;
+            try {
+              data = JSON.parse(reader.result);
+            } catch (err) {
+              storageErrorMessage.value = 'JSONファイルとして読み込めませんでした。このアプリで書き出したバックアップファイルを選んでください。';
+              return;
+            }
+            const list = Array.isArray(data) ? data : (data && Array.isArray(data.recipes) ? data.recipes : null);
+            if (!list) {
+              storageErrorMessage.value = 'レシピデータの形式ではありません。このアプリで書き出したバックアップファイルを選んでください。';
+              return;
+            }
+
+            const seenIds = new Set();
+            const cleaned = [];
+            list.forEach(item => {
+              const rec = sanitizeImportedRecipe(item);
+              if (!rec) return;
+              if (!rec.id || seenIds.has(rec.id)) rec.id = generateUniqueId();
+              seenIds.add(rec.id);
+              cleaned.push(rec);
+            });
+
+            if (cleaned.length === 0) {
+              storageErrorMessage.value = '読み込めるレシピが1件もありませんでした。';
+              return;
+            }
+            pendingImport.value = {
+              fileName: file.name,
+              recipes: cleaned,
+              invalidCount: list.length - cleaned.length
+            };
+          };
+          reader.readAsText(file);
+        };
+
+        const confirmImport = (mode) => {
+          const pending = pendingImport.value;
+          if (!pending) return;
+
+          let added = 0;
+          let skipped = 0;
+          const wasLocked = storageLocked.value;
+          // Importing is an explicit decision to resolve corrupted data
+          storageLocked.value = false;
+
+          const ok = commitRecipesChange(() => {
+            if (mode === 'replace') {
+              recipes.value = pending.recipes.slice();
+              added = pending.recipes.length;
+            } else {
+              const existing = new Set(recipes.value.map(r => String(r.id)));
+              const toAdd = pending.recipes.filter(r => !existing.has(String(r.id)));
+              skipped = pending.recipes.length - toAdd.length;
+              added = toAdd.length;
+              recipes.value = [...toAdd, ...recipes.value];
+            }
+          });
+
+          if (!ok) {
+            storageLocked.value = wasLocked;
+            return; // storageErrorMessage already set; keep the dialog open to retry
+          }
+
+          corruptRawData = null;
+          pendingImport.value = null;
+          // Meal plan may hold recipes that no longer exist
+          if (mode === 'replace') clearMealPlanner();
+          showToast(mode === 'replace'
+            ? `${added}件のレシピで置き換えました`
+            : `${added}件のレシピを追加しました${skipped ? `（同じIDの${skipped}件はスキップ）` : ''}`);
+          activeTab.value = 'recipes';
         };
 
         const switchToAddNewTab = () => {
@@ -1496,25 +1812,41 @@
           const cleanNotes = getNotesArray(recipeForm.value.notes);
 
           const targetId = recipeForm.value.id;
+          let successMsg = '';
 
-          if (targetId) {
-            const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
-            if (idx !== -1) {
-              recipes.value[idx] = {
-                ...recipes.value[idx],
-                ...recipeForm.value,
-                id: targetId,
-                tags,
-                ingredients: cleanIngredients,
-                steps: cleanSteps,
-                notes: cleanNotes,
-                updatedAt: new Date().toISOString()
-              };
-              showToast('レシピを修正・更新しました！');
+          const ok = commitRecipesChange(() => {
+            if (targetId) {
+              const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
+              if (idx !== -1) {
+                recipes.value[idx] = {
+                  ...recipes.value[idx],
+                  ...recipeForm.value,
+                  id: targetId,
+                  tags,
+                  ingredients: cleanIngredients,
+                  steps: cleanSteps,
+                  notes: cleanNotes,
+                  updatedAt: new Date().toISOString()
+                };
+                successMsg = 'レシピを修正・更新しました！';
+              } else {
+                const newEntry = {
+                  id: targetId,
+                  ...recipeForm.value,
+                  tags,
+                  ingredients: cleanIngredients,
+                  steps: cleanSteps,
+                  notes: cleanNotes,
+                  createdAt: new Date().toISOString()
+                };
+                recipes.value.unshift(newEntry);
+                successMsg = 'レシピを保存しました！';
+              }
             } else {
+              const newId = generateUniqueId();
               const newEntry = {
-                id: targetId,
                 ...recipeForm.value,
+                id: newId,
                 tags,
                 ingredients: cleanIngredients,
                 steps: cleanSteps,
@@ -1522,24 +1854,14 @@
                 createdAt: new Date().toISOString()
               };
               recipes.value.unshift(newEntry);
-              showToast('レシピを保存しました！');
+              successMsg = 'マイレシピに保存しました！';
             }
-          } else {
-            const newId = generateUniqueId();
-            const newEntry = {
-              ...recipeForm.value,
-              id: newId,
-              tags,
-              ingredients: cleanIngredients,
-              steps: cleanSteps,
-              notes: cleanNotes,
-              createdAt: new Date().toISOString()
-            };
-            recipes.value.unshift(newEntry);
-            showToast('マイレシピに保存しました！');
-          }
+          });
 
-          saveRecipesToStorage();
+          // On failure keep the form as-is so the user's input is not lost
+          if (!ok) return;
+
+          showToast(successMsg);
           resetForm();
           activeTab.value = 'recipes';
         };
@@ -1607,14 +1929,19 @@
             const target = recipeToDelete.value;
             const targetId = String(target.id);
 
-            recipes.value = recipes.value.filter(r => {
-              if (r && r.id) {
-                return String(r.id) !== targetId;
-              }
-              return r !== target;
+            const ok = commitRecipesChange(() => {
+              recipes.value = recipes.value.filter(r => {
+                if (r && r.id) {
+                  return String(r.id) !== targetId;
+                }
+                return r !== target;
+              });
             });
 
-            saveRecipesToStorage();
+            if (!ok) {
+              recipeToDelete.value = null;
+              return;
+            }
 
             if (detailRecipe.value && String(detailRecipe.value.id) === targetId) {
               detailRecipe.value = null;
@@ -1914,13 +2241,11 @@ ${JSON.stringify(recipeSummary, null, 2)}
 
         // JSON Export
         const exportRecipesJson = () => {
-          const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recipes.value, null, 2));
-          const dlAnchor = document.createElement('a');
-          dlAnchor.setAttribute("href", dataStr);
-          dlAnchor.setAttribute("download", `my_recipe_vault_backup_${new Date().toISOString().slice(0,10)}.json`);
-          document.body.appendChild(dlAnchor);
-          dlAnchor.click();
-          dlAnchor.remove();
+          downloadTextFile(
+            JSON.stringify(recipes.value, null, 2),
+            `my_recipe_vault_backup_${new Date().toISOString().slice(0,10)}.json`,
+            'application/json;charset=utf-8'
+          );
           showToast('レシピデータをファイルに保存しました！');
         };
 
@@ -1992,7 +2317,14 @@ ${JSON.stringify(recipeSummary, null, 2)}
           sendAiMessage,
           sendQuickAiQuery,
           clearAiChat,
-          exportRecipesJson
+          exportRecipesJson,
+          storageErrorMessage,
+          storageLocked,
+          downloadCorruptData,
+          discardCorruptData,
+          pendingImport,
+          handleImportFileSelect,
+          confirmImport
         };
       }
     }).mount('#app');
