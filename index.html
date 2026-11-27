@@ -290,7 +290,7 @@
           <div class="pt-2 border-t border-slate-100 space-y-2">
             <div class="flex items-center justify-between text-xs font-bold text-slate-600">
               <span class="flex items-center gap-1.5 text-emerald-800">
-                <i class="fa-solid fa-refrigerator text-emerald-600"></i>
+                <i class="fa-solid fa-snowflake text-emerald-600"></i>
                 <span>冷蔵庫にある食材から絞り込む:</span>
               </span>
               <button 
@@ -1316,6 +1316,13 @@
       </div>
     </div>
 
+    <!-- Floating mini timer (keeps the running cooking timer visible after closing the recipe) -->
+    <div v-if="timerRunning && !detailRecipe" class="fixed bottom-20 md:bottom-6 right-4 z-40 bg-slate-800 text-white rounded-full shadow-xl pl-4 pr-1.5 py-1.5 flex items-center gap-2 text-xs">
+      <i class="fa-solid fa-stopwatch text-emerald-400"></i>
+      <span class="font-mono font-bold text-amber-300 text-sm">{{ formatTimer(timerSeconds) }}</span>
+      <button @click="stopTimer" class="bg-red-600 hover:bg-red-500 rounded-full px-3 py-1 font-bold">停止</button>
+    </div>
+
     <!-- Mobile Bottom Navigation Bar -->
     <nav class="md:hidden sticky bottom-0 bg-white border-t border-slate-200 flex justify-around py-2.5 px-1 z-40 text-[10px] font-medium shadow-lg">
       <button 
@@ -1359,9 +1366,11 @@
         const toastMessage = ref('');
         const aiErrorMessage = ref('');
 
+        let toastTimer = null;
         const showToast = (msg) => {
           toastMessage.value = msg;
-          setTimeout(() => { toastMessage.value = ''; }, 3500);
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => { toastMessage.value = ''; toastTimer = null; }, 3500);
         };
 
         // Data: Personal Saved Recipes
@@ -1636,6 +1645,7 @@
 
         // LocalStorage Load & Auto-Sanitize IDs
         onMounted(() => {
+          markFormClean();
           resetApiSettingsForm();
 
           let saved = null;
@@ -1657,7 +1667,7 @@
             }
 
             if (Array.isArray(parsed)) {
-              recipes.value = parsed.map(r => ({
+              recipes.value = parsed.map(r => stripFormOnlyFields({
                 ...r,
                 id: (r && r.id) ? String(r.id) : generateUniqueId()
               }));
@@ -1929,6 +1939,15 @@
         };
 
         const switchToAddNewTab = () => {
+          if (isFormDirty()) {
+            // Coming back from another tab: just show the unsaved form again
+            if (activeTab.value !== 'add') {
+              activeTab.value = 'add';
+              return;
+            }
+            // Already on the form: pressing again means "start a new one"
+            if (!confirmDiscardForm()) return;
+          }
           resetForm();
           activeTab.value = 'add';
         };
@@ -1949,6 +1968,26 @@
           });
           return Array.from(tags);
         });
+
+        // "1時間半" → 90, "15〜20分" → 15, "約30分" → 30, "１時間" → 60. Returns null if unknown.
+        const parseCookingMinutes = (str) => {
+          if (typeof str !== 'string' && typeof str !== 'number') return null;
+          const s = String(str).replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+          const num = '(\\d+(?:\\.\\d+)?)';
+          const range = '(?:\\s*[〜~～\\-ー－]\\s*\\d+(?:\\.\\d+)?)?';
+          const h = s.match(new RegExp(num + range + '\\s*(?:時間|h|hour)', 'i'));
+          const m = s.match(new RegExp(num + range + '\\s*(?:分|min)', 'i'));
+          let total = 0;
+          let found = false;
+          if (h) { total += parseFloat(h[1]) * 60; found = true; if (/時間半/.test(s)) total += 30; }
+          if (m) { total += parseFloat(m[1]); found = true; }
+          if (!found) {
+            const n = s.match(/\d+(?:\.\d+)?/);
+            if (!n) return null;
+            total = parseFloat(n[0]); // bare number: treat as minutes
+          }
+          return total;
+        };
 
         // Filtered Recipes Logic
         const filteredRecipes = computed(() => {
@@ -1973,9 +2012,9 @@
             if (sortBy.value === 'rating') return (b.rating || 0) - (a.rating || 0);
             if (sortBy.value === 'title') return (a.title || '').localeCompare(b.title || '', 'ja');
             if (sortBy.value === 'time') {
-              const timeA = parseInt(a.cookingTime) || 999;
-              const timeB = parseInt(b.cookingTime) || 999;
-              return timeA - timeB;
+              const timeA = parseCookingMinutes(a.cookingTime) ?? Infinity;
+              const timeB = parseCookingMinutes(b.cookingTime) ?? Infinity;
+              return timeA === timeB ? 0 : (timeA < timeB ? -1 : 1);
             }
             return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
           });
@@ -2022,6 +2061,12 @@
           recipeForm.value.notes.splice(idx, 1);
         };
 
+        // tagsStr only exists for the form's text box; recipes store tags[]
+        const stripFormOnlyFields = (obj) => {
+          const { tagsStr, ...rest } = obj;
+          return rest;
+        };
+
         // Save Logic
         const saveNewRecipe = () => {
           if (!recipeForm.value.title.trim()) return;
@@ -2049,7 +2094,7 @@
             if (targetId) {
               const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
               if (idx !== -1) {
-                recipes.value[idx] = {
+                recipes.value[idx] = stripFormOnlyFields({
                   ...recipes.value[idx],
                   ...recipeForm.value,
                   id: targetId,
@@ -2058,10 +2103,10 @@
                   steps: cleanSteps,
                   notes: cleanNotes,
                   updatedAt: new Date().toISOString()
-                };
+                });
                 successMsg = 'レシピを修正・更新しました！';
               } else {
-                const newEntry = {
+                const newEntry = stripFormOnlyFields({
                   id: targetId,
                   ...recipeForm.value,
                   tags,
@@ -2069,13 +2114,13 @@
                   steps: cleanSteps,
                   notes: cleanNotes,
                   createdAt: new Date().toISOString()
-                };
+                });
                 recipes.value.unshift(newEntry);
                 successMsg = 'レシピを保存しました！';
               }
             } else {
               const newId = generateUniqueId();
-              const newEntry = {
+              const newEntry = stripFormOnlyFields({
                 ...recipeForm.value,
                 id: newId,
                 tags,
@@ -2083,7 +2128,7 @@
                 steps: cleanSteps,
                 notes: cleanNotes,
                 createdAt: new Date().toISOString()
-              };
+              });
               recipes.value.unshift(newEntry);
               successMsg = 'マイレシピに保存しました！';
             }
@@ -2115,10 +2160,28 @@
           };
           aiImportInput.value = '';
           clearAllAiImages();
+          markFormClean();
+        };
+
+        // Unsaved-changes tracking for the add/edit form
+        let formBaseline = '';
+        const markFormClean = () => { formBaseline = JSON.stringify(recipeForm.value); };
+        const isFormDirty = () => {
+          return JSON.stringify(recipeForm.value) !== formBaseline ||
+            !!aiImportInput.value.trim() ||
+            aiImages.value.length > 0;
+        };
+        // Returns true if it is OK to throw away the current form contents
+        const confirmDiscardForm = () => {
+          if (!isFormDirty()) return true;
+          return confirm(recipeForm.value.id
+            ? '修正中の内容がまだ保存されていません。破棄してよろしいですか？'
+            : '入力中のレシピがまだ保存されていません。破棄してよろしいですか？');
         };
 
         const openEditModal = (recipe) => {
           if (!recipe) return;
+          if (String(recipeForm.value.id) !== String(recipe.id) && !confirmDiscardForm()) return;
           if (!recipe.id) {
             recipe.id = generateUniqueId();
             saveRecipesToStorage();
@@ -2141,6 +2204,9 @@
             tagsStr: recipe.tags ? recipe.tags.join(', ') : '',
             notes: existingNotes.length ? existingNotes : ['']
           };
+          aiImportInput.value = '';
+          clearAllAiImages();
+          markFormClean();
           addMode.value = 'manual';
           activeTab.value = 'add';
         };
@@ -2382,6 +2448,7 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
             } else {
               stopTimer();
               showToast('⏰ タイマーの時間になりました！');
+              try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) { /* unsupported */ }
             }
           }, 1000);
         };
@@ -2517,13 +2584,28 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
           if (shoppingList.value.length === 0) return;
           const txt = "【買い物リスト】\n" + shoppingList.value.map(i => `・${i.name} (${i.amounts.join(' + ')})`).join('\n');
           
-          const el = document.createElement('textarea');
-          el.value = txt;
-          document.body.appendChild(el);
-          el.select();
-          document.execCommand('copy');
-          document.body.removeChild(el);
-          showToast('買い物リストをクリップボードにコピーしました！');
+          const fallbackCopy = () => {
+            const el = document.createElement('textarea');
+            el.value = txt;
+            el.setAttribute('readonly', '');
+            el.style.position = 'fixed';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(el);
+            return ok;
+          };
+          const done = (ok) => showToast(ok
+            ? '買い物リストをクリップボードにコピーしました！'
+            : 'コピーできませんでした。お手数ですが手動で選択してコピーしてください。');
+
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(txt).then(() => done(true), () => done(fallbackCopy()));
+          } else {
+            done(fallbackCopy());
+          }
         };
 
         // AI Chat for Personal Saved Recipes
