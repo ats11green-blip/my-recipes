@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MyRecipeVault - マイレシピ管理＆献立ノート</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 外部ライブラリはバージョンを固定しています（勝手に新しい版に変わって壊れるのを防ぐため）。
+       更新するときは動作確認してから番号を書き換えてください。 -->
+  <!-- Tailwind CSS (Play CDN v3, pinned) -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <!-- Vue 3 CDN -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Vue 3 (production build, pinned) -->
+  <script src="https://unpkg.com/vue@3.5.45/dist/vue.global.prod.js"></script>
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
   
@@ -57,6 +59,72 @@
         <div class="flex justify-end">
           <button @click="aiErrorMessage = ''" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition">
             閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Storage Save Error Modal -->
+    <div v-if="storageErrorMessage" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-red-200">
+        <div class="flex items-center space-x-3 text-red-600">
+          <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+          <h3 class="font-bold text-base text-slate-800">保存できませんでした</h3>
+        </div>
+        <p class="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{{ storageErrorMessage }}</p>
+        <div class="flex justify-end gap-2 text-xs">
+          <button @click="exportRecipesJson" class="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl border border-emerald-200 transition">
+            <i class="fa-solid fa-file-export mr-1"></i>今のデータを書き出す
+          </button>
+          <button @click="storageErrorMessage = ''" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Confirm Modal -->
+    <div v-if="pendingImport" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-file-import text-emerald-600"></i>
+            <span>バックアップの読み込み</span>
+          </h3>
+          <button @click="pendingImport = null" class="text-slate-400 hover:text-slate-600 text-base">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="space-y-2 text-slate-700 leading-relaxed">
+          <p>
+            「<strong>{{ pendingImport.fileName }}</strong>」から
+            <strong class="text-emerald-700 text-sm">{{ pendingImport.recipes.length }}</strong> 件のレシピを読み込めます。
+          </p>
+          <p v-if="pendingImport.invalidCount > 0" class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            ※ タイトルが無いなど、形式が正しくない {{ pendingImport.invalidCount }} 件は読み込みません。
+          </p>
+          <p class="text-slate-500">
+            現在のレシピ: {{ recipes.length }} 件<br>
+            「追加」は同じIDのレシピを飛ばして追加します。「置き換え」は現在のレシピをすべて消してから読み込みます。
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-2 pt-2">
+          <button
+            @click="confirmImport('merge')"
+            class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition shadow">
+            今のレシピに追加する
+          </button>
+          <button
+            @click="confirmImport('replace')"
+            class="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-xl border border-red-200 transition">
+            今のレシピをすべて置き換える
+          </button>
+          <button
+            @click="pendingImport = null"
+            class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
+            キャンセル
           </button>
         </div>
       </div>
@@ -117,7 +185,7 @@
         <!-- Quick Data Actions -->
         <div class="flex items-center space-x-2">
           <button 
-            @click="showApiKeyModal = true" 
+            @click="openApiKeyModal" 
             title="Gemini APIキー設定（AI機能用）"
             class="bg-emerald-800 hover:bg-emerald-900 text-emerald-100 text-xs px-2.5 py-1.5 rounded-lg transition flex items-center space-x-1 border border-emerald-600">
             <i class="fa-solid fa-key text-amber-300"></i>
@@ -130,12 +198,48 @@
             class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs p-2 rounded-lg transition">
             <i class="fa-solid fa-file-export"></i>
           </button>
+
+          <button
+            @click="$refs.importInput.click()"
+            title="バックアップ（JSON）からレシピを読み込む"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs p-2 rounded-lg transition">
+            <i class="fa-solid fa-file-import"></i>
+          </button>
+          <input
+            ref="importInput"
+            type="file"
+            accept="application/json,.json"
+            class="hidden"
+            @change="handleImportFileSelect">
         </div>
       </div>
     </header>
 
     <!-- Main Content Container -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <!-- Corrupted Storage Warning -->
+      <div v-if="storageLocked" class="mb-6 bg-red-50 border border-red-300 rounded-2xl p-5 space-y-3 text-xs text-red-900">
+        <div class="flex items-center gap-2 font-bold text-sm">
+          <i class="fa-solid fa-triangle-exclamation text-red-600"></i>
+          <span>保存されているレシピデータを読み込めませんでした</span>
+        </div>
+        <p class="leading-relaxed">
+          元のデータを守るため、<strong>保存を一時停止</strong>しています（この状態で追加・修正しても保存されません）。
+          まず「元データをダウンロード」で控えを取ってから、バックアップ（JSON）を読み込むか、データを破棄して新しく始めてください。
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <button @click="downloadCorruptData" class="px-3 py-2 bg-white hover:bg-red-100 text-red-800 font-bold rounded-xl border border-red-300 transition">
+            <i class="fa-solid fa-download mr-1"></i>元データをダウンロード
+          </button>
+          <button @click="$refs.importInput.click()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition">
+            <i class="fa-solid fa-file-import mr-1"></i>バックアップを読み込む
+          </button>
+          <button @click="discardCorruptData" class="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition">
+            <i class="fa-solid fa-trash-can mr-1"></i>破棄して新しく始める
+          </button>
+        </div>
+      </div>
 
       <!-- ================= TAB 1: マイレシピ一覧 & 高機能検索 ================= -->
       <section v-if="activeTab === 'recipes'" class="space-y-6">
@@ -186,7 +290,7 @@
           <div class="pt-2 border-t border-slate-100 space-y-2">
             <div class="flex items-center justify-between text-xs font-bold text-slate-600">
               <span class="flex items-center gap-1.5 text-emerald-800">
-                <i class="fa-solid fa-refrigerator text-emerald-600"></i>
+                <i class="fa-solid fa-snowflake text-emerald-600"></i>
                 <span>冷蔵庫にある食材から絞り込む:</span>
               </span>
               <button 
@@ -683,6 +787,8 @@
               <input 
                 v-model="recipeForm.url" 
                 type="url" 
+                pattern="https?://.+" 
+                title="http:// または https:// で始まるURLを入力してください" 
                 placeholder="https://..." 
                 class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
             </div>
@@ -770,12 +876,12 @@
               </div>
 
               <!-- Selected Recipe Card for this day -->
-              <div v-if="mealPlan[dIdx]" class="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1 shadow-sm text-xs relative group">
+              <div v-if="mealPlanRecipes[dIdx]" class="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1 shadow-sm text-xs relative group">
                 <div class="font-bold text-emerald-900 leading-tight line-clamp-2">
-                  {{ mealPlan[dIdx].title }}
+                  {{ mealPlanRecipes[dIdx].title }}
                 </div>
                 <div class="text-[10px] text-slate-400 flex items-center justify-between">
-                  <span>{{ mealPlan[dIdx].servings || '1食分' }}</span>
+                  <span>{{ mealPlanRecipes[dIdx].servings || '1食分' }}</span>
                   <button @click="removeFromMealPlan(dIdx)" class="text-slate-300 hover:text-red-500 p-0.5">
                     <i class="fa-solid fa-xmark"></i>
                   </button>
@@ -810,11 +916,11 @@
 
             <div v-if="shoppingList.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
               <label 
-                v-for="(item, idx) in shoppingList" 
-                :key="idx" 
+                v-for="item in shoppingList" 
+                :key="item.name" 
                 :class="item.checked ? 'bg-slate-100 text-slate-400 line-through' : 'bg-white text-slate-800 shadow-sm border-slate-200'"
                 class="p-2.5 rounded-xl border flex items-center space-x-2 cursor-pointer transition">
-                <input type="checkbox" v-model="item.checked" class="rounded text-emerald-600 focus:ring-emerald-500">
+                <input type="checkbox" :checked="item.checked" @change="toggleShoppingItem(item.name)" class="rounded text-emerald-600 focus:ring-emerald-500">
                 <span class="font-bold flex-1 truncate">{{ item.name }}</span>
                 <span class="text-[11px] text-slate-400 shrink-0">{{ item.amounts.join(' + ') }}</span>
               </label>
@@ -841,9 +947,20 @@
                 <p class="text-[11px] text-slate-500">あなたが保存した手持ちレシピ（現在{{ recipes.length }}件）を把握してアドバイスします</p>
               </div>
             </div>
-            <button @click="clearAiChat" class="text-xs text-slate-400 hover:text-slate-600">
+            <button @click="clearAiChat" class="text-xs text-slate-400 hover:text-slate-600 shrink-0">
               <i class="fa-solid fa-arrows-rotate mr-1"></i> 履歴クリア
             </button>
+          </div>
+          <!-- What is sent to the AI -->
+          <div class="px-4 py-2 bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <i class="fa-solid fa-circle-info mr-1"></i>
+              AIに送る内容: レシピ名・カテゴリ・調理時間・材料名（質問にレシピ名が含まれる場合は、そのレシピの分量・手順も）
+            </span>
+            <label class="flex items-center gap-1.5 cursor-pointer font-bold text-slate-600 shrink-0">
+              <input type="checkbox" v-model="aiShareNotes" @change="saveAiShareNotes" class="rounded text-emerald-600 focus:ring-emerald-500">
+              マイメモも送る
+            </label>
           </div>
 
           <!-- Chat Messages Area -->
@@ -1012,8 +1129,8 @@
         <!-- Footer Actions -->
         <div class="p-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs">
           <a 
-            v-if="detailRecipe.url" 
-            :href="detailRecipe.url" 
+            v-if="safeLinkUrl(detailRecipe.url)" 
+            :href="safeLinkUrl(detailRecipe.url)" 
             target="_blank" 
             rel="noopener noreferrer"
             class="text-emerald-700 hover:underline font-bold flex items-center gap-1">
@@ -1109,7 +1226,7 @@
             <i class="fa-solid fa-key text-amber-500"></i>
             <span>Gemini APIキー設定（AI自動取り込み用）</span>
           </h3>
-          <button @click="showApiKeyModal = false" class="text-slate-400 hover:text-slate-600 text-base">
+          <button @click="closeApiKeyModal" class="text-slate-400 hover:text-slate-600 text-base">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
@@ -1133,12 +1250,60 @@
             type="password" 
             placeholder="AIzaSy..." 
             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500">
-          <p class="text-[10px] text-slate-400 mt-1">※APIキーはお使いのスマホ（ブラウザ）にのみ安全に保存されます。</p>
+          <div class="flex items-start justify-between gap-2 mt-1">
+            <p class="text-[10px] text-slate-400 leading-relaxed">
+              ※APIキーはこのブラウザ内にだけ保存され、AI機能を使うとき以外は外部に送られません。
+              ただし暗号化はされないため、<strong class="text-slate-500">家族共用・職場などの共用端末では保存しないでください。</strong>
+            </p>
+            <button 
+              v-if="hasSavedApiKey" 
+              type="button" 
+              @click="deleteApiKey" 
+              class="shrink-0 text-[10px] text-red-500 hover:text-red-700 hover:underline font-bold">
+              キーを削除
+            </button>
+          </div>
+          <details class="mt-2 text-[10px] text-slate-500">
+            <summary class="cursor-pointer font-bold text-slate-600">万一キーが漏れたときの被害を減らすには（推奨）</summary>
+            <ul class="list-disc list-inside space-y-0.5 mt-1 leading-relaxed">
+              <li>Google AI Studio / Google Cloud のキー設定で「APIの制限」を Generative Language API のみにする</li>
+              <li>公開URLで使う場合は「ウェブサイトの制限」にそのURLを登録する</li>
+              <li>課金を有効にしている場合は、予算アラートを設定する</li>
+              <li>漏れた疑いがあれば、すぐにキーを削除して作り直す</li>
+            </ul>
+          </details>
+        </div>
+
+        <div>
+          <label class="block font-bold text-slate-700 mb-1">使用するAIモデル</label>
+          <div class="flex gap-2">
+            <input
+              v-model="userModel"
+              list="gemini-model-options"
+              type="text"
+              :placeholder="DEFAULT_GEMINI_MODEL"
+              class="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500">
+            <button
+              type="button"
+              @click="fetchAvailableModels"
+              :disabled="isFetchingModels"
+              class="shrink-0 px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl transition">
+              <i :class="isFetchingModels ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-list'" class="mr-1"></i>一覧を取得
+            </button>
+          </div>
+          <datalist id="gemini-model-options">
+            <option v-for="m in availableModels" :key="m" :value="m"></option>
+          </datalist>
+          <p class="text-[10px] text-slate-400 mt-1">
+            空欄なら「{{ DEFAULT_GEMINI_MODEL }}」（常に最新のFlashモデルを指す名前）を使います。
+            AI機能が「モデルが見つからない」エラーで動かなくなったら、「一覧を取得」から別のモデルを選んでください。
+          </p>
+          <p v-if="modelListMessage" class="text-[10px] mt-1" :class="availableModels.length ? 'text-emerald-700' : 'text-red-600'">{{ modelListMessage }}</p>
         </div>
 
         <div class="flex justify-end gap-2 pt-2">
           <button 
-            @click="showApiKeyModal = false" 
+            @click="closeApiKeyModal" 
             class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">
             キャンセル
           </button>
@@ -1149,6 +1314,13 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- Floating mini timer (keeps the running cooking timer visible after closing the recipe) -->
+    <div v-if="timerRunning && !detailRecipe" class="fixed bottom-20 md:bottom-6 right-4 z-40 bg-slate-800 text-white rounded-full shadow-xl pl-4 pr-1.5 py-1.5 flex items-center gap-2 text-xs">
+      <i class="fa-solid fa-stopwatch text-emerald-400"></i>
+      <span class="font-mono font-bold text-amber-300 text-sm">{{ formatTimer(timerSeconds) }}</span>
+      <button @click="stopTimer" class="bg-red-600 hover:bg-red-500 rounded-full px-3 py-1 font-bold">停止</button>
     </div>
 
     <!-- Mobile Bottom Navigation Bar -->
@@ -1194,9 +1366,11 @@
         const toastMessage = ref('');
         const aiErrorMessage = ref('');
 
+        let toastTimer = null;
         const showToast = (msg) => {
           toastMessage.value = msg;
-          setTimeout(() => { toastMessage.value = ''; }, 3500);
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => { toastMessage.value = ''; toastTimer = null; }, 3500);
         };
 
         // Data: Personal Saved Recipes
@@ -1221,6 +1395,16 @@
 
         // Delete Modal State
         const recipeToDelete = ref(null);
+
+        // Storage Safety State
+        const STORAGE_KEY = 'my_personal_recipe_vault';
+        const storageErrorMessage = ref('');
+        // true while saved data could not be read: saving is blocked so the original is not overwritten
+        const storageLocked = ref(false);
+        let corruptRawData = null;
+
+        // Import State
+        const pendingImport = ref(null);
 
         // Recipe Form State
         const recipeForm = ref({
@@ -1334,7 +1518,12 @@
 
         // Weekly Planner
         const daysOfWeek = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
+        // Each day holds a recipe ID (string) or null. Store IDs, not copies,
+        // so edits/deletes of a recipe are reflected in the plan and shopping list.
+        const PLANNER_STORAGE_KEY = 'my_recipe_meal_plan';
         const mealPlan = ref([null, null, null, null, null, null, null]);
+        // Names of shopping list items the user has checked off
+        const checkedShoppingItems = ref([]);
         const selectingPlanDayIdx = ref(null);
 
         // AI Chat Assistant
@@ -1347,49 +1536,418 @@
         const aiInput = ref('');
         const isAiThinking = ref(false);
 
-        // Gemini API Setup (Matches initial version: gemini-3-flash-preview)
-        const getApiKey = () => {
-          return (userApiKey.value && userApiKey.value.trim()) || localStorage.getItem('my_recipe_gemini_api_key') || "";
+        // Gemini API Setup
+        // "gemini-flash-latest" is Google's alias that always points to the newest Flash model,
+        // so it does not stop working when a specific (preview) model is retired.
+        const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+        const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+        const MODEL_STORAGE_KEY = 'my_recipe_gemini_model';
+        const userModel = ref('');
+        const availableModels = ref([]);
+        const isFetchingModels = ref(false);
+        const modelListMessage = ref('');
+
+        // Accept "models/xxx" too; only allow characters valid in a model ID
+        const normalizeModelName = (name) => {
+          const n = String(name || '').trim().replace(/^models\//, '');
+          return /^[A-Za-z0-9._-]+$/.test(n) ? n : '';
         };
 
-        const getApiUrl = () => {
-          const key = getApiKey();
-          return `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`;
+        // Only *saved* settings are used for API calls. Values typed into the settings dialog
+        // take effect when "保存" is pressed; "キャンセル" discards them.
+        const API_KEY_STORAGE_KEY = 'my_recipe_gemini_api_key';
+        const savedModel = ref('');
+        const hasSavedApiKey = ref(false);
+        const getModelName = () => normalizeModelName(savedModel.value) || DEFAULT_GEMINI_MODEL;
+
+        const readStorage = (key) => {
+          try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
+        };
+
+        const getApiKey = () => readStorage(API_KEY_STORAGE_KEY).trim();
+
+        // Call Gemini generateContent. The key goes in a request header, not in the URL,
+        // so it does not end up in URLs that may be logged.
+        const callGemini = (payload, apiKey = getApiKey()) => {
+          return fetch(`${GEMINI_API_BASE}/models/${getModelName()}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(payload)
+          });
+        };
+
+        // Extract the answer text from a generateContent result.
+        // Returns { text } or { text: '', reason } explaining why there is no answer.
+        const extractResponseText = (result) => {
+          const blockReason = result?.promptFeedback?.blockReason;
+          if (blockReason) {
+            return { text: '', reason: `入力内容がAIの安全基準によりブロックされました（${blockReason}）。` };
+          }
+          const cand = result?.candidates?.[0];
+          const parts = Array.isArray(cand?.content?.parts) ? cand.content.parts : [];
+          // Skip "thought" parts some models return; join the rest
+          const text = parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('').trim();
+          if (text) return { text };
+
+          const finish = cand?.finishReason;
+          const reasons = {
+            SAFETY: 'AIの安全基準により回答が止められました。',
+            RECITATION: '著作権などの理由で、AIが回答を控えました。',
+            MAX_TOKENS: '回答が長すぎて途中で打ち切られました。',
+            PROHIBITED_CONTENT: 'AIの利用規約により回答が止められました。'
+          };
+          return { text: '', reason: reasons[finish] || `AIから回答が返ってきませんでした${finish ? `（${finish}）` : ''}。` };
+        };
+
+        // Turn an error response into a readable message, with a hint when the model is the problem
+        const describeApiError = async (response) => {
+          const errData = await response.json().catch(() => ({}));
+          const base = errData.error?.message || `HTTP エラー ${response.status}: ${response.statusText}`;
+          const looksLikeModelProblem = response.status === 404 || /model/i.test(base) && /(not found|not supported|deprecated|no longer)/i.test(base);
+          return looksLikeModelProblem
+            ? `${base}\n\n▶ 使用中のAIモデル「${getModelName()}」が使えなくなっている可能性があります。ヘッダーの「APIキー設定」→「一覧を取得」から別のモデルを選んで保存してください。`
+            : base;
+        };
+
+        const fetchAvailableModels = async () => {
+          // Use the key currently typed in the dialog (it may not be saved yet)
+          const key = userApiKey.value.trim() || getApiKey();
+          if (!key) {
+            modelListMessage.value = '先にAPIキーを入力してください。';
+            return;
+          }
+          isFetchingModels.value = true;
+          modelListMessage.value = '';
+          try {
+            const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1000`, {
+              headers: { 'x-goog-api-key': key }
+            });
+            if (!res.ok) throw new Error(await describeApiError(res));
+            const data = await res.json();
+            const names = (data.models || [])
+              .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+              .map(m => normalizeModelName(m.name))
+              .filter(n => n && n.startsWith('gemini'));
+            availableModels.value = Array.from(new Set(names)).sort();
+            modelListMessage.value = availableModels.value.length
+              ? `${availableModels.value.length}件のモデルが使えます。入力欄をタップして選べます。`
+              : '使えるモデルが見つかりませんでした。';
+          } catch (err) {
+            availableModels.value = [];
+            modelListMessage.value = `モデル一覧を取得できませんでした: ${err.message || err}`;
+          } finally {
+            isFetchingModels.value = false;
+          }
         };
 
         // LocalStorage Load & Auto-Sanitize IDs
         onMounted(() => {
-          const savedKey = localStorage.getItem('my_recipe_gemini_api_key');
-          if (savedKey) userApiKey.value = savedKey;
+          markFormClean();
+          resetApiSettingsForm();
 
-          const saved = localStorage.getItem('my_personal_recipe_vault');
+          let saved = null;
+          try {
+            saved = localStorage.getItem(STORAGE_KEY);
+          } catch (e) {
+            console.error('Failed to access localStorage:', e);
+            storageErrorMessage.value = 'ブラウザの保存領域にアクセスできません（プライベートモードや設定で無効になっている可能性があります）。\nこの状態では、追加・修正したレシピは保存されません。';
+            return;
+          }
+
           if (saved) {
+            let parsed;
             try {
-              const parsed = JSON.parse(saved);
-              if (Array.isArray(parsed)) {
-                recipes.value = parsed.map(r => ({
-                  ...r,
-                  id: (r && r.id) ? String(r.id) : generateUniqueId()
-                }));
-                saveRecipesToStorage();
-              }
+              parsed = JSON.parse(saved);
             } catch (e) {
-              console.error('Failed to load recipes:', e);
+              console.error('Failed to parse saved recipes:', e);
+              parsed = undefined;
+            }
+
+            if (Array.isArray(parsed)) {
+              recipes.value = parsed.map(r => stripFormOnlyFields({
+                ...r,
+                id: (r && r.id) ? String(r.id) : generateUniqueId()
+              }));
+              saveRecipesToStorage();
+            } else {
+              // Keep the original untouched: block saving until the user decides what to do
+              corruptRawData = saved;
+              storageLocked.value = true;
             }
           }
+
+          loadPlannerFromStorage();
         });
 
         const saveApiKey = () => {
-          localStorage.setItem('my_recipe_gemini_api_key', userApiKey.value.trim());
+          const rawModel = userModel.value.trim();
+          const model = normalizeModelName(rawModel);
+          if (rawModel && !model) {
+            modelListMessage.value = 'モデル名に使えない文字が含まれています（英数字・「.」「-」「_」のみ）。';
+            return;
+          }
+          const key = userApiKey.value.trim();
+          try {
+            if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+            else localStorage.removeItem(API_KEY_STORAGE_KEY);
+            if (model) localStorage.setItem(MODEL_STORAGE_KEY, model);
+            else localStorage.removeItem(MODEL_STORAGE_KEY);
+          } catch (e) {
+            storageErrorMessage.value = `設定を保存できませんでした。\n(${e && e.message ? e.message : e})`;
+            return;
+          }
+          userApiKey.value = key;
+          hasSavedApiKey.value = !!key;
+          userModel.value = model;
+          savedModel.value = model;
           showApiKeyModal.value = false;
-          showToast('APIキーを保存しました！AI機能が使用可能です。');
+          showToast(key
+            ? `設定を保存しました！（AIモデル: ${getModelName()}）`
+            : 'APIキーを削除しました。AI機能は使えなくなります。');
         };
 
+        // Put the saved values back into the dialog (discarding unsaved edits)
+        const resetApiSettingsForm = () => {
+          userApiKey.value = getApiKey();
+          hasSavedApiKey.value = !!userApiKey.value;
+          savedModel.value = normalizeModelName(readStorage(MODEL_STORAGE_KEY));
+          userModel.value = savedModel.value;
+          modelListMessage.value = '';
+        };
+
+        const openApiKeyModal = () => {
+          resetApiSettingsForm();
+          showApiKeyModal.value = true;
+        };
+
+        const closeApiKeyModal = () => {
+          resetApiSettingsForm();
+          showApiKeyModal.value = false;
+        };
+
+        const deleteApiKey = () => {
+          if (!confirm('このブラウザに保存しているAPIキーを削除します。よろしいですか？')) return;
+          try {
+            localStorage.removeItem(API_KEY_STORAGE_KEY);
+          } catch (e) {
+            storageErrorMessage.value = `APIキーを削除できませんでした。\n(${e && e.message ? e.message : e})`;
+            return;
+          }
+          userApiKey.value = '';
+          hasSavedApiKey.value = false;
+          showToast('APIキーを削除しました。');
+        };
+
+        const isQuotaError = (e) => {
+          return e && (
+            e.name === 'QuotaExceededError' ||
+            e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+            e.code === 22 ||
+            e.code === 1014
+          );
+        };
+
+        // Returns true only when the data was actually written. Callers must check it.
         const saveRecipesToStorage = () => {
-          localStorage.setItem('my_personal_recipe_vault', JSON.stringify(recipes.value));
+          if (storageLocked.value) {
+            storageErrorMessage.value = '保存済みデータを読み込めなかったため、元データを守るために保存を停止しています。\n画面上部の案内から、元データの控えを取ったうえでバックアップを読み込むか、破棄してください。';
+            return false;
+          }
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes.value));
+            return true;
+          } catch (e) {
+            console.error('Failed to save recipes:', e);
+            storageErrorMessage.value = isQuotaError(e)
+              ? 'ブラウザの保存容量（約5MB）がいっぱいです。今回の変更は保存されていません。\n写真付きのレシピが多いと容量を圧迫します。写真を外す・不要なレシピを削除するなどして容量を空けてください。\n念のため「今のデータを書き出す」でバックアップを取っておくことをおすすめします。'
+              : `データの保存に失敗しました。今回の変更は保存されていません。\n(${e && e.message ? e.message : e})`;
+            return false;
+          }
+        };
+
+        // Run a mutation on recipes and persist it; roll back if persisting fails
+        const commitRecipesChange = (mutate) => {
+          const snapshot = recipes.value.slice();
+          mutate();
+          if (saveRecipesToStorage()) return true;
+          recipes.value = snapshot;
+          return false;
+        };
+
+        const downloadTextFile = (text, fileName, mime) => {
+          const blob = new Blob([text], { type: mime });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+
+        const downloadCorruptData = () => {
+          if (corruptRawData === null) return;
+          downloadTextFile(corruptRawData, `my_recipe_vault_corrupt_${new Date().toISOString().slice(0,10)}.txt`, 'text/plain;charset=utf-8');
+          showToast('元データをダウンロードしました');
+        };
+
+        const discardCorruptData = () => {
+          if (!confirm('読み込めなかった元データを破棄して、空の状態から始めます。\n元に戻せません。先に「元データをダウンロード」で控えを取りましたか？')) return;
+          storageLocked.value = false;
+          if (saveRecipesToStorage()) {
+            corruptRawData = null;
+            showToast('元データを破棄しました。新しく保存できます。');
+          } else {
+            storageLocked.value = true;
+          }
+        };
+
+        // ---- Import (restore from JSON backup) ----
+        const toStr = (v) => (typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''));
+        const isSafeLinkUrl = (u) => /^https?:\/\//i.test(u);
+        const safeLinkUrl = (u) => {
+          const s = typeof u === 'string' ? u.trim() : '';
+          return isSafeLinkUrl(s) ? s : '';
+        };
+        const isSafeImageUrl = (u) => /^data:image\/[a-z0-9.+-]+;base64,/i.test(u) || /^https?:\/\//i.test(u);
+
+        // Build a clean recipe from untrusted data; returns null if unusable
+        const sanitizeImportedRecipe = (r) => {
+          if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+          const title = toStr(r.title).trim();
+          if (!title) return null;
+
+          const ingredients = Array.isArray(r.ingredients)
+            ? r.ingredients.map(i => {
+                if (typeof i === 'string') return { name: i.trim(), amount: '' };
+                if (i && typeof i === 'object') return { name: toStr(i.name).trim(), amount: toStr(i.amount).trim() };
+                return null;
+              }).filter(i => i && i.name)
+            : [];
+          const steps = Array.isArray(r.steps) ? r.steps.map(s => toStr(s).trim()).filter(Boolean) : [];
+          const tags = Array.isArray(r.tags) ? r.tags.map(t => toStr(t).trim()).filter(Boolean) : [];
+          const rating = Math.round(Number(r.rating));
+          const url = toStr(r.url).trim();
+          const imageUrl = toStr(r.imageUrl).trim();
+
+          const recipe = {
+            id: toStr(r.id).trim(),
+            title,
+            category: toStr(r.category).trim(),
+            cookingTime: toStr(r.cookingTime).trim(),
+            servings: toStr(r.servings).trim(),
+            rating: rating >= 1 && rating <= 5 ? rating : 0,
+            source: toStr(r.source).trim(),
+            url: isSafeLinkUrl(url) ? url : '',
+            imageUrl: isSafeImageUrl(imageUrl) ? imageUrl : '',
+            ingredients,
+            steps,
+            tags,
+            notes: getNotesArray(r.notes),
+            createdAt: toStr(r.createdAt) || new Date().toISOString()
+          };
+          if (toStr(r.updatedAt)) recipe.updatedAt = toStr(r.updatedAt);
+          return recipe;
+        };
+
+        const handleImportFileSelect = (e) => {
+          const file = e.target.files && e.target.files[0];
+          e.target.value = '';
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onerror = () => {
+            storageErrorMessage.value = 'ファイルを読み込めませんでした。';
+          };
+          reader.onload = () => {
+            let data;
+            try {
+              data = JSON.parse(reader.result);
+            } catch (err) {
+              storageErrorMessage.value = 'JSONファイルとして読み込めませんでした。このアプリで書き出したバックアップファイルを選んでください。';
+              return;
+            }
+            const list = Array.isArray(data) ? data : (data && Array.isArray(data.recipes) ? data.recipes : null);
+            if (!list) {
+              storageErrorMessage.value = 'レシピデータの形式ではありません。このアプリで書き出したバックアップファイルを選んでください。';
+              return;
+            }
+
+            const seenIds = new Set();
+            const cleaned = [];
+            list.forEach(item => {
+              const rec = sanitizeImportedRecipe(item);
+              if (!rec) return;
+              if (!rec.id || seenIds.has(rec.id)) rec.id = generateUniqueId();
+              seenIds.add(rec.id);
+              cleaned.push(rec);
+            });
+
+            if (cleaned.length === 0) {
+              storageErrorMessage.value = '読み込めるレシピが1件もありませんでした。';
+              return;
+            }
+            pendingImport.value = {
+              fileName: file.name,
+              recipes: cleaned,
+              invalidCount: list.length - cleaned.length
+            };
+          };
+          reader.readAsText(file);
+        };
+
+        const confirmImport = (mode) => {
+          const pending = pendingImport.value;
+          if (!pending) return;
+
+          let added = 0;
+          let skipped = 0;
+          const wasLocked = storageLocked.value;
+          // Importing is an explicit decision to resolve corrupted data
+          storageLocked.value = false;
+
+          const ok = commitRecipesChange(() => {
+            if (mode === 'replace') {
+              recipes.value = pending.recipes.slice();
+              added = pending.recipes.length;
+            } else {
+              const existing = new Set(recipes.value.map(r => String(r.id)));
+              const toAdd = pending.recipes.filter(r => !existing.has(String(r.id)));
+              skipped = pending.recipes.length - toAdd.length;
+              added = toAdd.length;
+              recipes.value = [...toAdd, ...recipes.value];
+            }
+          });
+
+          if (!ok) {
+            storageLocked.value = wasLocked;
+            return; // storageErrorMessage already set; keep the dialog open to retry
+          }
+
+          corruptRawData = null;
+          pendingImport.value = null;
+          // Days whose recipe no longer exists become empty; the rest are kept
+          pruneMealPlan();
+          showToast(mode === 'replace'
+            ? `${added}件のレシピで置き換えました`
+            : `${added}件のレシピを追加しました${skipped ? `（同じIDの${skipped}件はスキップ）` : ''}`);
+          activeTab.value = 'recipes';
         };
 
         const switchToAddNewTab = () => {
+          if (isFormDirty()) {
+            // Coming back from another tab: just show the unsaved form again
+            if (activeTab.value !== 'add') {
+              activeTab.value = 'add';
+              return;
+            }
+            // Already on the form: pressing again means "start a new one"
+            if (!confirmDiscardForm()) return;
+          }
           resetForm();
           activeTab.value = 'add';
         };
@@ -1410,6 +1968,26 @@
           });
           return Array.from(tags);
         });
+
+        // "1時間半" → 90, "15〜20分" → 15, "約30分" → 30, "１時間" → 60. Returns null if unknown.
+        const parseCookingMinutes = (str) => {
+          if (typeof str !== 'string' && typeof str !== 'number') return null;
+          const s = String(str).replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+          const num = '(\\d+(?:\\.\\d+)?)';
+          const range = '(?:\\s*[〜~～\\-ー－]\\s*\\d+(?:\\.\\d+)?)?';
+          const h = s.match(new RegExp(num + range + '\\s*(?:時間|h|hour)', 'i'));
+          const m = s.match(new RegExp(num + range + '\\s*(?:分|min)', 'i'));
+          let total = 0;
+          let found = false;
+          if (h) { total += parseFloat(h[1]) * 60; found = true; if (/時間半/.test(s)) total += 30; }
+          if (m) { total += parseFloat(m[1]); found = true; }
+          if (!found) {
+            const n = s.match(/\d+(?:\.\d+)?/);
+            if (!n) return null;
+            total = parseFloat(n[0]); // bare number: treat as minutes
+          }
+          return total;
+        };
 
         // Filtered Recipes Logic
         const filteredRecipes = computed(() => {
@@ -1434,9 +2012,9 @@
             if (sortBy.value === 'rating') return (b.rating || 0) - (a.rating || 0);
             if (sortBy.value === 'title') return (a.title || '').localeCompare(b.title || '', 'ja');
             if (sortBy.value === 'time') {
-              const timeA = parseInt(a.cookingTime) || 999;
-              const timeB = parseInt(b.cookingTime) || 999;
-              return timeA - timeB;
+              const timeA = parseCookingMinutes(a.cookingTime) ?? Infinity;
+              const timeB = parseCookingMinutes(b.cookingTime) ?? Infinity;
+              return timeA === timeB ? 0 : (timeA < timeB ? -1 : 1);
             }
             return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
           });
@@ -1483,9 +2061,23 @@
           recipeForm.value.notes.splice(idx, 1);
         };
 
+        // tagsStr only exists for the form's text box; recipes store tags[]
+        const stripFormOnlyFields = (obj) => {
+          const { tagsStr, ...rest } = obj;
+          return rest;
+        };
+
         // Save Logic
         const saveNewRecipe = () => {
           if (!recipeForm.value.title.trim()) return;
+
+          // Only http(s) links are allowed (blocks "javascript:" etc. that could run code when clicked)
+          const rawUrl = (recipeForm.value.url || '').trim();
+          if (rawUrl && !isSafeLinkUrl(rawUrl)) {
+            storageErrorMessage.value = '元URLは「http://」または「https://」で始まるものだけ登録できます。\nURL欄を修正してから、もう一度保存してください。';
+            return;
+          }
+          recipeForm.value.url = rawUrl;
 
           const tags = recipeForm.value.tagsStr 
             ? recipeForm.value.tagsStr.split(/[,、]/).map(s => s.trim()).filter(Boolean)
@@ -1496,50 +2088,56 @@
           const cleanNotes = getNotesArray(recipeForm.value.notes);
 
           const targetId = recipeForm.value.id;
+          let successMsg = '';
 
-          if (targetId) {
-            const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
-            if (idx !== -1) {
-              recipes.value[idx] = {
-                ...recipes.value[idx],
-                ...recipeForm.value,
-                id: targetId,
-                tags,
-                ingredients: cleanIngredients,
-                steps: cleanSteps,
-                notes: cleanNotes,
-                updatedAt: new Date().toISOString()
-              };
-              showToast('レシピを修正・更新しました！');
+          const ok = commitRecipesChange(() => {
+            if (targetId) {
+              const idx = recipes.value.findIndex(r => String(r.id) === String(targetId));
+              if (idx !== -1) {
+                recipes.value[idx] = stripFormOnlyFields({
+                  ...recipes.value[idx],
+                  ...recipeForm.value,
+                  id: targetId,
+                  tags,
+                  ingredients: cleanIngredients,
+                  steps: cleanSteps,
+                  notes: cleanNotes,
+                  updatedAt: new Date().toISOString()
+                });
+                successMsg = 'レシピを修正・更新しました！';
+              } else {
+                const newEntry = stripFormOnlyFields({
+                  id: targetId,
+                  ...recipeForm.value,
+                  tags,
+                  ingredients: cleanIngredients,
+                  steps: cleanSteps,
+                  notes: cleanNotes,
+                  createdAt: new Date().toISOString()
+                });
+                recipes.value.unshift(newEntry);
+                successMsg = 'レシピを保存しました！';
+              }
             } else {
-              const newEntry = {
-                id: targetId,
+              const newId = generateUniqueId();
+              const newEntry = stripFormOnlyFields({
                 ...recipeForm.value,
+                id: newId,
                 tags,
                 ingredients: cleanIngredients,
                 steps: cleanSteps,
                 notes: cleanNotes,
                 createdAt: new Date().toISOString()
-              };
+              });
               recipes.value.unshift(newEntry);
-              showToast('レシピを保存しました！');
+              successMsg = 'マイレシピに保存しました！';
             }
-          } else {
-            const newId = generateUniqueId();
-            const newEntry = {
-              ...recipeForm.value,
-              id: newId,
-              tags,
-              ingredients: cleanIngredients,
-              steps: cleanSteps,
-              notes: cleanNotes,
-              createdAt: new Date().toISOString()
-            };
-            recipes.value.unshift(newEntry);
-            showToast('マイレシピに保存しました！');
-          }
+          });
 
-          saveRecipesToStorage();
+          // On failure keep the form as-is so the user's input is not lost
+          if (!ok) return;
+
+          showToast(successMsg);
           resetForm();
           activeTab.value = 'recipes';
         };
@@ -1562,10 +2160,28 @@
           };
           aiImportInput.value = '';
           clearAllAiImages();
+          markFormClean();
+        };
+
+        // Unsaved-changes tracking for the add/edit form
+        let formBaseline = '';
+        const markFormClean = () => { formBaseline = JSON.stringify(recipeForm.value); };
+        const isFormDirty = () => {
+          return JSON.stringify(recipeForm.value) !== formBaseline ||
+            !!aiImportInput.value.trim() ||
+            aiImages.value.length > 0;
+        };
+        // Returns true if it is OK to throw away the current form contents
+        const confirmDiscardForm = () => {
+          if (!isFormDirty()) return true;
+          return confirm(recipeForm.value.id
+            ? '修正中の内容がまだ保存されていません。破棄してよろしいですか？'
+            : '入力中のレシピがまだ保存されていません。破棄してよろしいですか？');
         };
 
         const openEditModal = (recipe) => {
           if (!recipe) return;
+          if (String(recipeForm.value.id) !== String(recipe.id) && !confirmDiscardForm()) return;
           if (!recipe.id) {
             recipe.id = generateUniqueId();
             saveRecipesToStorage();
@@ -1588,6 +2204,9 @@
             tagsStr: recipe.tags ? recipe.tags.join(', ') : '',
             notes: existingNotes.length ? existingNotes : ['']
           };
+          aiImportInput.value = '';
+          clearAllAiImages();
+          markFormClean();
           addMode.value = 'manual';
           activeTab.value = 'add';
         };
@@ -1607,14 +2226,22 @@
             const target = recipeToDelete.value;
             const targetId = String(target.id);
 
-            recipes.value = recipes.value.filter(r => {
-              if (r && r.id) {
-                return String(r.id) !== targetId;
-              }
-              return r !== target;
+            const ok = commitRecipesChange(() => {
+              recipes.value = recipes.value.filter(r => {
+                if (r && r.id) {
+                  return String(r.id) !== targetId;
+                }
+                return r !== target;
+              });
             });
 
-            saveRecipesToStorage();
+            if (!ok) {
+              recipeToDelete.value = null;
+              return;
+            }
+
+            // Remove the deleted recipe from the meal plan too
+            pruneMealPlan();
 
             if (detailRecipe.value && String(detailRecipe.value.id) === targetId) {
               detailRecipe.value = null;
@@ -1625,13 +2252,78 @@
           }
         };
 
-        // Gemini AI Parsing (Original Initial Code Logic)
+        // Parse the AI answer into an object. Tolerates ```json fences or text around the JSON.
+        const parseAiRecipeJson = (text) => {
+          const tryParse = (t) => { try { return JSON.parse(t); } catch (e) { return undefined; } };
+          let data = tryParse(text.trim());
+          if (data === undefined) {
+            const cleaned = text.replace(/```(?:json)?/gi, '').trim();
+            const s = cleaned.indexOf('{');
+            const e = cleaned.lastIndexOf('}');
+            if (s !== -1 && e > s) data = tryParse(cleaned.substring(s, e + 1));
+          }
+          // Some models wrap the result in an array
+          if (Array.isArray(data)) data = data[0];
+          return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+        };
+
+        // Coerce AI output (shape is not guaranteed) into the recipe shape the form expects
+        const normalizeAiRecipe = (d) => {
+          const text = (v) => {
+            if (typeof v === 'string') return v.trim();
+            if (typeof v === 'number') return String(v);
+            return '';
+          };
+          const toList = (v) => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string') return v.split(/\r?\n/);
+            return [];
+          };
+
+          const ingredients = toList(d.ingredients).map(i => {
+            if (typeof i === 'string') {
+              // "豚肉 200g" / "豚肉：200g" → name + amount
+              const s = i.trim();
+              const m = s.match(/^(.+?)\s*[:：]\s*(.+)$/) || s.match(/^(.+)\s+(\S+)$/);
+              return m ? { name: m[1].trim(), amount: m[2].trim() } : { name: s, amount: '' };
+            }
+            if (i && typeof i === 'object') {
+              return { name: text(i.name ?? i.item ?? i.ingredient), amount: text(i.amount ?? i.quantity ?? i.qty) };
+            }
+            return null;
+          }).filter(i => i && i.name);
+
+          const steps = toList(d.steps ?? d.instructions).map(s => {
+            if (s && typeof s === 'object') return text(s.text ?? s.step ?? s.description ?? s.instruction);
+            // Drop leading "1." / "1)" / "①" numbering; the form numbers steps itself
+            return text(s).replace(/^(\d+[.)．、]\s*|[①-⑳]\s*)/, '');
+          }).filter(Boolean);
+
+          const tags = (Array.isArray(d.tags) ? d.tags : (typeof d.tags === 'string' ? d.tags.split(/[,、]/) : []))
+            .map(text).map(t => t.replace(/^#/, '')).filter(Boolean);
+
+          const notes = getNotesArray(Array.isArray(d.notes) ? d.notes.map(text) : text(d.notes));
+
+          return {
+            title: text(d.title),
+            category: text(d.category),
+            cookingTime: text(d.cookingTime),
+            servings: text(d.servings),
+            source: text(d.source),
+            ingredients,
+            steps,
+            tags,
+            notes
+          };
+        };
+
+        // Gemini AI Parsing
         const executeAiImport = async () => {
           if ((!aiImportInput.value.trim() && aiImages.value.length === 0) || isParsingWithAi.value) return;
 
           const keyToUse = getApiKey();
           if (!keyToUse) {
-            showApiKeyModal.value = true;
+            openApiKeyModal();
             return;
           }
 
@@ -1681,51 +2373,48 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
             });
 
             const payload = {
-              contents: [{ parts }],
-              systemInstruction: { parts: [{ text: systemPrompt }] }
+              contents: [{ role: 'user', parts }],
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              // Ask the API to return pure JSON (no Markdown, no extra text)
+              generationConfig: { responseMimeType: 'application/json' }
             };
 
-            
-
-            const response = await fetch(getApiUrl(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            const response = await callGemini(payload);
 
             if (!response.ok) {
-              const errData = await response.json().catch(() => ({}));
-              throw new Error(errData.error?.message || `HTTP エラー ${response.status}: ${response.statusText}`);
+              throw new Error(await describeApiError(response));
             }
 
             const result = await response.json();
-            const textResp = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const { text: textResp, reason } = extractResponseText(result);
+            if (!textResp) throw new Error(reason);
 
-            let cleaned = textResp.replace(/```json/g, '').replace(/```/g, '').trim();
-            const sIdx = cleaned.indexOf('{');
-            const eIdx = cleaned.lastIndexOf('}');
-            if (sIdx !== -1 && eIdx !== -1) {
-              cleaned = cleaned.substring(sIdx, eIdx + 1);
+            const parsed = parseAiRecipeJson(textResp);
+            if (!parsed) {
+              throw new Error('AIの回答をレシピとして読み取れませんでした。もう一度試すか、画像やテキストを変えてお試しください。');
+            }
+            const rec = normalizeAiRecipe(parsed);
+            if (!rec.title && rec.ingredients.length === 0 && rec.steps.length === 0) {
+              throw new Error('レシピ情報を読み取れませんでした。料理名・材料・作り方が写っている画像や、レシピの文章を指定してください。');
             }
 
-            const parsed = JSON.parse(cleaned);
             const currentEditingId = recipeForm.value.id;
-            const aiNotes = getNotesArray(parsed.notes);
+            const urlMatch = promptText.match(/https?:\/\/[^\s"'<>]+/);
 
             recipeForm.value = {
               id: currentEditingId,
-              title: parsed.title || '取り込みレシピ',
-              category: parsed.category || '主菜',
-              cookingTime: parsed.cookingTime || '約20分',
-              servings: parsed.servings || '2人分',
+              title: rec.title || '取り込みレシピ',
+              category: rec.category || '主菜',
+              cookingTime: rec.cookingTime || '約20分',
+              servings: rec.servings || '2人分',
               rating: 5,
-              source: parsed.source || (aiImages.value.length > 0 ? `写真/スクショ` : 'Web取り込み'),
-              url: promptText.startsWith('http') ? promptText : '',
+              source: rec.source || (aiImages.value.length > 0 ? `写真/スクショ` : 'Web取り込み'),
+              url: urlMatch ? urlMatch[0] : '',
               imageUrl: aiImages.value.length > 0 ? aiImages.value[0].dataUrl : recipeForm.value.imageUrl,
-              ingredients: parsed.ingredients && parsed.ingredients.length ? parsed.ingredients : [{ name: '', amount: '' }],
-              steps: parsed.steps && parsed.steps.length ? parsed.steps : [''],
-              tagsStr: parsed.tags ? parsed.tags.join(', ') : '取り込み',
-              notes: aiNotes.length ? aiNotes : ['']
+              ingredients: rec.ingredients.length ? rec.ingredients : [{ name: '', amount: '' }],
+              steps: rec.steps.length ? rec.steps : [''],
+              tagsStr: rec.tags.length ? rec.tags.join(', ') : '取り込み',
+              notes: rec.notes.length ? rec.notes : ['']
             };
 
             addMode.value = 'manual';
@@ -1759,6 +2448,7 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
             } else {
               stopTimer();
               showToast('⏰ タイマーの時間になりました！');
+              try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) { /* unsupported */ }
             }
           }, 1000);
         };
@@ -1775,49 +2465,23 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
         };
 
         // Weekly Meal Planner Logic
-        const addToMealPlanner = (recipe) => {
-          const emptyIdx = mealPlan.value.findIndex(p => p === null);
-          if (emptyIdx !== -1) {
-            mealPlan.value[emptyIdx] = recipe;
-            showToast(`「${daysOfWeek[emptyIdx]}」の献立に追加しました！`);
-            activeTab.value = 'planner';
-          } else {
-            mealPlan.value[0] = recipe;
-            showToast(`月曜日の献立を更新しました！`);
-            activeTab.value = 'planner';
-          }
-        };
-
-        const openSelectRecipeForPlanModal = (dIdx) => {
-          selectingPlanDayIdx.value = dIdx;
-        };
-
-        const selectRecipeForMealPlan = (recipe) => {
-          if (selectingPlanDayIdx.value !== null) {
-            mealPlan.value[selectingPlanDayIdx.value] = recipe;
-            selectingPlanDayIdx.value = null;
-            showToast('献立に登録しました');
-          }
-        };
-
-        const removeFromMealPlan = (dIdx) => {
-          mealPlan.value[dIdx] = null;
-        };
-
-        const clearMealPlanner = () => {
-          mealPlan.value = [null, null, null, null, null, null, null];
-        };
+        // Resolve the stored IDs to the current recipe objects (null if empty or deleted)
+        const mealPlanRecipes = computed(() => {
+          const byId = new Map(recipes.value.map(r => [String(r.id), r]));
+          return mealPlan.value.map(id => (id ? byId.get(String(id)) || null : null));
+        });
 
         // Auto Aggregated Shopping List
         const shoppingList = computed(() => {
           const map = new Map();
-          mealPlan.value.forEach(recipe => {
-            if (recipe && recipe.ingredients) {
+          const checked = new Set(checkedShoppingItems.value);
+          mealPlanRecipes.value.forEach(recipe => {
+            if (recipe && Array.isArray(recipe.ingredients)) {
               recipe.ingredients.forEach(ing => {
-                if (ing.name) {
+                if (ing && ing.name && ing.name.trim()) {
                   const key = ing.name.trim();
                   if (!map.has(key)) {
-                    map.set(key, { name: key, amounts: [ing.amount || '適量'], checked: false });
+                    map.set(key, { name: key, amounts: [ing.amount || '適量'], checked: checked.has(key) });
                   } else {
                     map.get(key).amounts.push(ing.amount || '適量');
                   }
@@ -1828,73 +2492,257 @@ Markdownブロックは除外して純粋なJSONのみを出力してくださ�
           return Array.from(map.values());
         });
 
+        const savePlannerToStorage = () => {
+          // Forget checks for items that are no longer on the list
+          const names = new Set(shoppingList.value.map(i => i.name));
+          checkedShoppingItems.value = checkedShoppingItems.value.filter(n => names.has(n));
+          try {
+            localStorage.setItem(PLANNER_STORAGE_KEY, JSON.stringify({
+              days: mealPlan.value,
+              checked: checkedShoppingItems.value
+            }));
+          } catch (e) {
+            console.error('Failed to save meal plan:', e);
+            storageErrorMessage.value = isQuotaError(e)
+              ? 'ブラウザの保存容量がいっぱいのため、献立・買い物リストのチェックを保存できませんでした。\n写真を外す・不要なレシピを削除するなどして容量を空けてください。'
+              : `献立の保存に失敗しました。\n(${e && e.message ? e.message : e})`;
+          }
+        };
+
+        const loadPlannerFromStorage = () => {
+          try {
+            const raw = localStorage.getItem(PLANNER_STORAGE_KEY);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (data && Array.isArray(data.days)) {
+              mealPlan.value = daysOfWeek.map((_, i) => {
+                const v = data.days[i];
+                return (typeof v === 'string' && v) ? v : null;
+              });
+            }
+            if (data && Array.isArray(data.checked)) {
+              checkedShoppingItems.value = data.checked.filter(n => typeof n === 'string');
+            }
+          } catch (e) {
+            // A broken plan is not worth blocking the app: start with an empty plan
+            console.error('Failed to load meal plan:', e);
+          }
+        };
+
+        // Empty the days whose recipe no longer exists
+        const pruneMealPlan = () => {
+          const ids = new Set(recipes.value.map(r => String(r.id)));
+          mealPlan.value = mealPlan.value.map(id => (id && ids.has(String(id)) ? id : null));
+          savePlannerToStorage();
+        };
+
+        const addToMealPlanner = (recipe) => {
+          if (!recipe || !recipe.id) return;
+          const emptyIdx = mealPlanRecipes.value.findIndex(r => r === null);
+          if (emptyIdx !== -1) {
+            mealPlan.value[emptyIdx] = String(recipe.id);
+            showToast(`「${daysOfWeek[emptyIdx]}」の献立に追加しました！`);
+          } else {
+            mealPlan.value[0] = String(recipe.id);
+            showToast(`月曜日の献立を更新しました！`);
+          }
+          savePlannerToStorage();
+          activeTab.value = 'planner';
+        };
+
+        const openSelectRecipeForPlanModal = (dIdx) => {
+          selectingPlanDayIdx.value = dIdx;
+        };
+
+        const selectRecipeForMealPlan = (recipe) => {
+          if (selectingPlanDayIdx.value !== null && recipe && recipe.id) {
+            mealPlan.value[selectingPlanDayIdx.value] = String(recipe.id);
+            selectingPlanDayIdx.value = null;
+            savePlannerToStorage();
+            showToast('献立に登録しました');
+          }
+        };
+
+        const removeFromMealPlan = (dIdx) => {
+          mealPlan.value[dIdx] = null;
+          savePlannerToStorage();
+        };
+
+        const clearMealPlanner = () => {
+          mealPlan.value = [null, null, null, null, null, null, null];
+          checkedShoppingItems.value = [];
+          savePlannerToStorage();
+        };
+
+        const toggleShoppingItem = (name) => {
+          const list = checkedShoppingItems.value;
+          checkedShoppingItems.value = list.includes(name) ? list.filter(n => n !== name) : [...list, name];
+          savePlannerToStorage();
+        };
+
         const copyShoppingListToClipboard = () => {
           if (shoppingList.value.length === 0) return;
           const txt = "【買い物リスト】\n" + shoppingList.value.map(i => `・${i.name} (${i.amounts.join(' + ')})`).join('\n');
           
-          const el = document.createElement('textarea');
-          el.value = txt;
-          document.body.appendChild(el);
-          el.select();
-          document.execCommand('copy');
-          document.body.removeChild(el);
-          showToast('買い物リストをクリップボードにコピーしました！');
+          const fallbackCopy = () => {
+            const el = document.createElement('textarea');
+            el.value = txt;
+            el.setAttribute('readonly', '');
+            el.style.position = 'fixed';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(el);
+            return ok;
+          };
+          const done = (ok) => showToast(ok
+            ? '買い物リストをクリップボードにコピーしました！'
+            : 'コピーできませんでした。お手数ですが手動で選択してコピーしてください。');
+
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(txt).then(() => done(true), () => done(fallbackCopy()));
+          } else {
+            done(fallbackCopy());
+          }
         };
 
         // AI Chat for Personal Saved Recipes
+        // Build the conversation for the API:
+        // - skip error messages and the opening greeting (the API expects the user to speak first)
+        // - merge consecutive messages from the same side (e.g. a question whose answer failed)
+        const buildChatContents = (messages) => {
+          const contents = [];
+          messages.forEach(m => {
+            if (m.isError || !m.text) return;
+            if (contents.length === 0 && m.role !== 'user') return;
+            const last = contents[contents.length - 1];
+            if (last && last.role === m.role) {
+              last.parts[0].text += '\n\n' + m.text;
+            } else {
+              contents.push({ role: m.role, parts: [{ text: m.text }] });
+            }
+          });
+          return contents;
+        };
+
+        // ---- What recipe data goes to the AI ----
+        // Keep requests small (cost/speed) and avoid sending personal notes unless the user opts in.
+        const CHAT_HISTORY_LIMIT = 20;          // messages of history sent per request
+        const CHAT_CONTEXT_CHAR_LIMIT = 30000;  // max characters of the recipe list
+        const AI_SHARE_NOTES_KEY = 'my_recipe_ai_share_notes';
+        const aiShareNotes = ref(readStorage(AI_SHARE_NOTES_KEY) === '1');
+        const saveAiShareNotes = () => {
+          try { localStorage.setItem(AI_SHARE_NOTES_KEY, aiShareNotes.value ? '1' : '0'); } catch (e) { /* not critical */ }
+        };
+
+        // Recipes whose title appears in the question (ignoring spaces) get full details
+        const findMentionedRecipes = (questionText) => {
+          const norm = (t) => String(t || '').replace(/[\s　]/g, '').toLowerCase();
+          const q = norm(questionText);
+          return recipes.value.filter(r => {
+            const t = norm(r.title);
+            return t.length >= 2 && q.includes(t);
+          }).slice(0, 3);
+        };
+
+        const buildChatSystemPrompt = (questionText) => {
+          const withNotes = aiShareNotes.value;
+          const summarize = (r) => {
+            const o = {
+              title: r.title,
+              category: r.category || undefined,
+              cookingTime: r.cookingTime || undefined,
+              ingredients: Array.isArray(r.ingredients) ? r.ingredients.map(i => i && i.name).filter(Boolean) : []
+            };
+            if (withNotes) {
+              const n = getNotesArray(r.notes);
+              if (n.length) o.notes = n;
+            }
+            return o;
+          };
+
+          // Compact one-line-per-recipe list, cut off when it gets too long
+          const lines = [];
+          let total = 0;
+          for (const r of recipes.value) {
+            const line = JSON.stringify(summarize(r));
+            if (total + line.length > CHAT_CONTEXT_CHAR_LIMIT) break;
+            lines.push(line);
+            total += line.length + 1;
+          }
+          const omitted = recipes.value.length - lines.length;
+
+          const mentioned = findMentionedRecipes(questionText).map(r => {
+            const o = {
+              title: r.title,
+              servings: r.servings || undefined,
+              ingredients: Array.isArray(r.ingredients) ? r.ingredients.map(i => ({ name: i.name, amount: i.amount })) : [],
+              steps: Array.isArray(r.steps) ? r.steps : []
+            };
+            if (withNotes) {
+              const n = getNotesArray(r.notes);
+              if (n.length) o.notes = n;
+            }
+            return o;
+          });
+
+          return `
+あなたはユーザーのマイレシピ専用シェフAIです。
+ユーザーが手持ちのレシピ帳に登録している以下のレシピデータ（全${recipes.value.length}件）を踏まえてアドバイスしてください。
+一覧には材料名だけを載せています。分量や手順が必要な質問で詳細が無い場合は、レシピ名を挙げて質問するよう案内してください。
+
+【ユーザーのマイレシピ一覧（1行1レシピ）】
+${lines.join('\n') || '（登録なし）'}
+${omitted > 0 ? `\n※ 長くなるため、残り${omitted}件は省略しています。` : ''}
+${mentioned.length ? `\n【質問に出てきたレシピの詳細】\n${JSON.stringify(mentioned, null, 1)}` : ''}
+`;
+        };
+
         const sendAiMessage = async () => {
           if (!aiInput.value.trim() || isAiThinking.value) return;
 
           const keyToUse = getApiKey();
           if (!keyToUse) {
-            showApiKeyModal.value = true;
+            openApiKeyModal();
             return;
           }
 
           const userText = aiInput.value.trim();
           aiMessages.value.push({ role: 'user', text: userText });
+          const pushError = (text) => aiMessages.value.push({ role: 'model', text, isError: true });
           aiInput.value = '';
           isAiThinking.value = true;
 
-          const recipeSummary = recipes.value.map(r => ({
-            title: r.title,
-            category: r.category,
-            cookingTime: r.cookingTime,
-            ingredients: r.ingredients ? r.ingredients.map(i => i.name) : [],
-            notes: r.notes
-          }));
-
-          const systemPrompt = `
-あなたはユーザーのマイレシピ専用シェフAIです。
-ユーザーが手持ちのレシピ帳に登録している以下のレシピデータ（全${recipes.value.length}件）を踏まえてアドバイスしてください。
-
-【ユーザーのマイレシピ一覧】
-${JSON.stringify(recipeSummary, null, 2)}
-`;
+          // Look at recent questions too, so follow-ups like "それを4人分に" keep the details
+          const recentQuestions = aiMessages.value.filter(m => m.role === 'user').slice(-3).map(m => m.text).join('\n');
+          const systemPrompt = buildChatSystemPrompt(recentQuestions);
 
           try {
             const payload = {
-              contents: aiMessages.value.map(m => ({
-                role: m.role,
-                parts: [{ text: m.text }]
-              })),
+              contents: buildChatContents(aiMessages.value.slice(-CHAT_HISTORY_LIMIT)),
               systemInstruction: { parts: [{ text: systemPrompt }] }
             };
 
-            const response = await fetch(getApiUrl(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            const response = await callGemini(payload);
+
+            if (!response.ok) {
+              pushError(`⚠️ エラーが発生しました。\n${await describeApiError(response)}`);
+              return;
+            }
 
             const result = await response.json();
-            const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || '申し訳ありません。上手く回答を作成できませんでした。';
-
-            aiMessages.value.push({ role: 'model', text: reply });
+            const { text: reply, reason } = extractResponseText(result);
+            if (reply) {
+              aiMessages.value.push({ role: 'model', text: reply });
+            } else {
+              pushError(`⚠️ ${reason}\n質問の言い方を変えて、もう一度お試しください。`);
+            }
 
           } catch (err) {
             console.error('AI chat error:', err);
-            aiMessages.value.push({ role: 'model', text: '通信エラーが発生しました。APIキーまたは通信状況をご確認ください。' });
+            pushError('⚠️ 通信エラーが発生しました。インターネット接続をご確認ください。');
           } finally {
             isAiThinking.value = false;
           }
@@ -1914,13 +2762,11 @@ ${JSON.stringify(recipeSummary, null, 2)}
 
         // JSON Export
         const exportRecipesJson = () => {
-          const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recipes.value, null, 2));
-          const dlAnchor = document.createElement('a');
-          dlAnchor.setAttribute("href", dataStr);
-          dlAnchor.setAttribute("download", `my_recipe_vault_backup_${new Date().toISOString().slice(0,10)}.json`);
-          document.body.appendChild(dlAnchor);
-          dlAnchor.click();
-          dlAnchor.remove();
+          downloadTextFile(
+            JSON.stringify(recipes.value, null, 2),
+            `my_recipe_vault_backup_${new Date().toISOString().slice(0,10)}.json`,
+            'application/json;charset=utf-8'
+          );
           showToast('レシピデータをファイルに保存しました！');
         };
 
@@ -1978,6 +2824,8 @@ ${JSON.stringify(recipeSummary, null, 2)}
           formatTimer,
           daysOfWeek,
           mealPlan,
+          mealPlanRecipes,
+          toggleShoppingItem,
           selectingPlanDayIdx,
           addToMealPlanner,
           openSelectRecipeForPlanModal,
@@ -1992,7 +2840,27 @@ ${JSON.stringify(recipeSummary, null, 2)}
           sendAiMessage,
           sendQuickAiQuery,
           clearAiChat,
-          exportRecipesJson
+          exportRecipesJson,
+          storageErrorMessage,
+          storageLocked,
+          downloadCorruptData,
+          discardCorruptData,
+          pendingImport,
+          handleImportFileSelect,
+          confirmImport,
+          DEFAULT_GEMINI_MODEL,
+          userModel,
+          availableModels,
+          isFetchingModels,
+          modelListMessage,
+          fetchAvailableModels,
+          hasSavedApiKey,
+          openApiKeyModal,
+          closeApiKeyModal,
+          deleteApiKey,
+          safeLinkUrl,
+          aiShareNotes,
+          saveAiShareNotes
         };
       }
     }).mount('#app');
